@@ -10,7 +10,9 @@ data/*.db-journal
 # Generated reports. Regenerate with `python3 -m operator_core.cli daily`.
 reports/*.md
 
-# Never commit marketplace credentials.
+# Never commit marketplace credentials. .env.example is the template and is
+# intentionally tracked — it holds variable names only, never values.
 .env
 .env.*
+!.env.example
 *credentials*.json
