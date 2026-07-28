@@ -118,6 +118,24 @@ class MarketplaceConnector(ABC):
         self.require_write_permission("update_ad_budget")
         raise NotImplementedError(f"{self.name}.update_ad_budget not implemented yet.")
 
+    def verify_connection(self) -> dict[str, Any]:
+        """Prove credentials actually work against the live API.
+
+        Returns a structured result instead of raising, so a status sweep can
+        diagnose every marketplace rather than dying on the first failure.
+        Connectors without a live implementation report why.
+        """
+        missing = self.missing_credentials()
+        return {
+            "marketplace": self.name,
+            "ok": False,
+            "detail": (
+                f"Missing credentials: {', '.join(missing)}" if missing
+                else "Credentials present, but this connector has no live "
+                     "implementation yet — nothing to verify against."
+            ),
+        }
+
     def status(self) -> dict[str, Any]:
         return {
             "marketplace": self.name,

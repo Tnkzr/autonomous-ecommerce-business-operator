@@ -1,10 +1,9 @@
-"""Concrete connectors for the five marketplaces.
+"""Connector registry.
 
-Each declares the exact credentials its real API needs, so `operator status`
-tells you precisely what to provision. The request/response plumbing is left
-unimplemented on purpose: writing untested API calls against live seller
-accounts — where a malformed call can delist products or mis-price inventory —
-is not something to do speculatively. Each class documents the endpoint to
+Amazon is fully implemented in `connectors.amazon`. The remaining four are
+still declarations: they name the exact credentials their real API needs, so
+`operator status` reports precisely what to provision, and their reads fail
+loudly rather than fabricating data. Each class documents the endpoints to
 implement and the gotcha that matters most for it.
 """
 
@@ -12,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .amazon import AmazonConnector
 from .base import DataEnvelope, MarketplaceConnector
 
 
@@ -42,26 +42,6 @@ class _UnimplementedReads(MarketplaceConnector):
 
     def fetch_ad_performance(self, *, since: str) -> DataEnvelope:
         return self._reads("fetch_ad_performance")
-
-
-class AmazonConnector(_UnimplementedReads):
-    """Amazon SP-API + Amazon Ads API.
-
-    Endpoints: Orders v0, FBA Inventory v1, Listings Items 2021-08-01,
-    Product Pricing v0 (competitive offers), Ads v2 reporting.
-
-    Gotcha: SP-API rate limits are per-operation and burst-bucketed. Reporting
-    endpoints are asynchronous — you request a report, poll for it, then
-    download. Treat 429s as normal and back off; hammering them gets the
-    application flagged.
-    """
-
-    name = "amazon"
-    required_env = (
-        "AMZ_LWA_CLIENT_ID", "AMZ_LWA_CLIENT_SECRET", "AMZ_REFRESH_TOKEN",
-        "AMZ_SELLER_ID", "AMZ_MARKETPLACE_ID",
-    )
-    docs_url = "https://developer-docs.amazon.com/sp-api/"
 
 
 class ShopifyConnector(_UnimplementedReads):

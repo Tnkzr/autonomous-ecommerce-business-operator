@@ -315,6 +315,23 @@ class TestPricing(unittest.TestCase):
         self.assertGreaterEqual(rec.recommended_price, rec.floor_price)
         self.assertIn("below our floor", " ".join(rec.rationale))
 
+    def test_sub_floor_rival_is_treated_as_an_outlier_not_the_market(self):
+        rec = recommend_price(
+            policy=POLICY, sku="P", marketplace="amazon", current_price=34.99,
+            supplier=make_supplier(unit_cost=8.20), duty_pct=5.0,
+            ad_cost_per_unit=3.50,
+            competitors=[
+                CompetitorOffer(seller="Dumper", price=15.00, in_stock=True),
+                CompetitorOffer(seller="Real1", price=32.99, in_stock=True),
+                CompetitorOffer(seller="Real2", price=33.50, in_stock=True),
+            ],
+        )
+        self.assertGreaterEqual(rec.recommended_price, rec.floor_price)
+        joined = " ".join(rec.rationale)
+        self.assertIn("below our floor", joined)
+        self.assertIn("credible field", joined,
+                      "It must explain why it still moved, not just why it refused.")
+
     def test_daily_change_is_clamped(self):
         rec = recommend_price(
             policy=POLICY, sku="P", marketplace="amazon", current_price=20.00,

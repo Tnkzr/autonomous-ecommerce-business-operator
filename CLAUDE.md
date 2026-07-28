@@ -35,9 +35,24 @@ accounts suspended. Work accordingly.
 - Comments explain *why*, especially where a rule looks arbitrary (cooldown
   windows, minimum click thresholds, the 0.5 unsellable-return factor).
 
+## Connectors
+
+Amazon is implemented in `connectors/amazon/` (auth → transport → client →
+connector). The layering matters: `client.py` mirrors the API, `connector.py`
+maps into domain models. Keep new endpoints in the layer they belong to.
+
+Test connector work through `tests/fakes.py` — `ScriptedSender` plus `FakeClock`
+run the whole request path offline. `FakeClock` fakes `sleep` *and* `monotonic`
+together; faking only one makes the rate limiter spin against wall time.
+
+Rate limits in `transport.RATE_LIMITS` are documented defaults. The live values
+come from `x-amzn-RateLimit-Limit` headers and the limiter adopts them at
+runtime — do not hardcode a seller's observed limit.
+
 ## Testing
 
-`python3 -m unittest tests.test_operator` — 75 tests, must stay green.
+`python3 -m unittest tests.test_operator tests.test_amazon` — 130 tests, must
+stay green.
 
 The highest-value tests assert *refusal*: that hazmat blocks a profitable
 product, that the repricer will not follow a rival below the floor, that caps

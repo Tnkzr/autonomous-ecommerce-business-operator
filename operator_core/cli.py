@@ -9,6 +9,15 @@
     python -m operator_core.cli approvals
     python -m operator_core.cli approve <action_id> --by "Name"
     python -m operator_core.cli outcome <action_id> --met true --note "..."
+
+Amazon SP-API (requires live credentials — see `status`):
+
+    python -m operator_core.cli amazon-verify
+    python -m operator_core.cli amazon-search "bamboo drawer organizer"
+    python -m operator_core.cli amazon-fees B08EXAMPLE1 34.99
+    python -m operator_core.cli amazon-inventory
+    python -m operator_core.cli amazon-orders --since 2026-07-01
+    python -m operator_core.cli amazon-offers B08EXAMPLE1
 """
 
 from __future__ import annotations
@@ -20,7 +29,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from connectors import all_status  # noqa: E402
+from connectors import (  # noqa: E402
+    ConnectorNotConfigured,
+    WriteNotPermitted,
+    all_status,
+    get_connector,
+)
+from connectors.amazon import SPAPIError  # noqa: E402
 
 from .config import PolicyError, load_policy  # noqa: E402
 from .economics import economics_for_candidate  # noqa: E402
@@ -46,20 +61,58 @@ def cmd_status(args, policy, store) -> int:
     print(f"Marketplaces:  {', '.join(policy.marketplaces)}")
 
     _hr("MARKETPLACE CONNECTIONS")
-    any_live = False
-    for s in all_status():
-        state = "READY" if s["configured"] else "NOT CONFIGURED"
-        any_live = any_live or s["configured"]
-        print(f"  {s['marketplace']:<10} {state}")
-        if s["missing_env"]:
-            print(f"             missing: {', '.join(s['missing_env'])}")
-            print(f"             docs:    {s['docs']}")
+    verified_any = False
+    configured_any = False
 
-    if not any_live:
+    for entry in all_status():
+        name = entry["marketplace"]
+        configured = entry["configured"]
+        configured_any = configured_any or configured
+
+        if not configured:
+            print(f"  {name:<10} NOT CONFIGURED")
+            print(f"             missing: {', '.join(entry['missing_env'])}")
+            print(f"             docs:    {entry['docs']}")
+            continue
+
+        if args.no_verify:
+            print(f"  {name:<10} CREDENTIALS PRESENT (not verified)")
+            continue
+
+        # Credentials exist, so prove they work rather than assuming.
+        conn = get_connector(name)
+        try:
+            result = conn.verify_connection()
+        except Exception as exc:  # a broken connector must not kill the sweep
+            print(f"  {name:<10} ERROR — {type(exc).__name__}: {exc}")
+            continue
+
+        if result.get("ok"):
+            verified_any = True
+            print(f"  {name:<10} CONNECTED — {result.get('detail', '')}")
+            if result.get("seller_marketplaces"):
+                print(f"             seller marketplaces: "
+                      f"{', '.join(result['seller_marketplaces'])}")
+            if result.get("endpoint"):
+                print(f"             endpoint: {result['endpoint']}")
+        else:
+            print(f"  {name:<10} FAILED VERIFICATION")
+            for line in str(result.get("detail", "")).splitlines():
+                print(f"             {line}")
+            if result.get("status_code"):
+                print(f"             HTTP {result['status_code']}")
+
+    if not configured_any:
         print(
             "\n  No marketplace is connected. The operator runs in advisory mode on\n"
             "  seed data only. It cannot read your real sales, inventory, or ads, and\n"
             "  it will not present simulated numbers as if they were real."
+        )
+    elif not verified_any and not args.no_verify:
+        print(
+            "\n  Credentials are present but none verified. Until a connection\n"
+            "  succeeds the operator stays on seed data — it will not guess at\n"
+            "  numbers it could not read."
         )
 
     _hr("GATES IN FORCE")
@@ -261,6 +314,133 @@ def cmd_price(args, policy, store) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Amazon SP-API commands. Each requires live credentials and says so plainly
+# rather than falling back to seed data — a silent fallback here would mix
+# simulated and real numbers in the same output.
+# ---------------------------------------------------------------------------
+def _amazon(policy, *, writes: bool = False):
+    """Build the Amazon connector, honouring the policy's execution mode."""
+    from connectors.amazon import AmazonConnector
+    allow = writes and policy.live_trading_enabled
+    if writes and not policy.live_trading_enabled:
+        print("Note: meta.live_trading_enabled is false — writes stay blocked.\n")
+    return AmazonConnector(allow_writes=allow)
+
+
+def cmd_amazon_verify(args, policy, store) -> int:
+    result = _amazon(policy).verify_connection()
+    _hr("AMAZON CONNECTION")
+    print(f"  Result:  {'CONNECTED' if result['ok'] else 'NOT CONNECTED'}")
+    print(f"  Detail:  {result.get('detail', '')}")
+    for key in ("endpoint", "country", "currency", "sandbox", "status_code"):
+        if result.get(key) not in (None, ""):
+            print(f"  {key.replace('_', ' ').title():<9}{result[key]}")
+    if result.get("seller_marketplaces"):
+        print(f"  Markets: {', '.join(result['seller_marketplaces'])}")
+    return 0 if result["ok"] else 1
+
+
+def cmd_amazon_search(args, policy, store) -> int:
+    env = _amazon(policy).search_products(args.keywords, max_pages=args.pages)
+    _hr(f"CATALOG SEARCH — {' '.join(args.keywords)}")
+    print(f"  source: {env.source} · fetched {env.fetched_at} · {len(env.payload)} results\n")
+    for row in env.payload:
+        rank = row.get("best_sales_rank")
+        print(f"  {row['asin']}  {(row.get('title') or '')[:62]}")
+        print(f"            brand={row.get('brand') or '-'}  "
+              f"type={row.get('product_type') or '-'}  "
+              f"rank={rank if rank else '-'}")
+    print("\n  Sales rank is a demand proxy, not a demand figure. Screen these with "
+          "`screen` before treating any of them as an opportunity.")
+    return 0
+
+
+def cmd_amazon_fees(args, policy, store) -> int:
+    """Reconcile policy fee estimates against Amazon's own calculation."""
+    env = _amazon(policy).fetch_fee_breakdown(args.asin, args.price, is_fba=not args.fbm)
+    p = env.payload
+    _hr(f"FEE RECONCILIATION — {args.asin} @ ${args.price:.2f}")
+    print(f"  Referral fee:   ${p['referral_fee']:.2f}  ({p['referral_pct']:.2f}%)")
+    print(f"  Fulfilment fee: ${p['fba_fee']:.2f}")
+    if p["variable_closing_fee"]:
+        print(f"  Closing fee:    ${p['variable_closing_fee']:.2f}")
+    print(f"  TOTAL:          ${p['total_fees']:.2f}")
+
+    policy_fees = policy.fees_for("amazon")
+    est_referral_pct = float(policy_fees.get("referral_pct", 0.0))
+    est_fulfilment = float(policy_fees.get("fulfillment_flat", 0.0))
+
+    print("\n  Against config/policy.toml [fees.amazon]:")
+    print(f"    referral_pct       policy {est_referral_pct:.2f}%  "
+          f"actual {p['referral_pct']:.2f}%  "
+          f"delta {p['referral_pct'] - est_referral_pct:+.2f}pp")
+    print(f"    fulfillment_flat   policy ${est_fulfilment:.2f}  "
+          f"actual ${p['fba_fee']:.2f}  "
+          f"delta ${p['fba_fee'] - est_fulfilment:+.2f}")
+
+    drift = abs(p["referral_pct"] - est_referral_pct) > 1.0 or \
+        abs(p["fba_fee"] - est_fulfilment) > 0.50
+    if drift:
+        print("\n  These differ materially. Every profit figure, price floor, and "
+              "\n  break-even ACOS in the system is computed from the policy values, "
+              "\n  so update [fees.amazon] before trusting any of them. Note in the "
+              "\n  commit which ASIN and price the numbers came from.")
+    else:
+        print("\n  Policy estimates match Amazon's calculation for this item.")
+    return 0
+
+
+def cmd_amazon_inventory(args, policy, store) -> int:
+    env = _amazon(policy).fetch_inventory()
+    _hr("AMAZON FBA INVENTORY")
+    print(f"  source: {env.source} · fetched {env.fetched_at}\n")
+    print(f"  {'SKU':<24}{'ASIN':<13}{'On hand':>8}{'Inbound':>9}"
+          f"{'Reserved':>10}{'Unfulfil':>10}")
+    for r in env.payload:
+        print(f"  {(r['sku'] or '')[:23]:<24}{(r['asin'] or '')[:12]:<13}"
+              f"{r['on_hand_units']:>8}{r['inbound_units']:>9}"
+              f"{r['reserved_units']:>10}{r['unfulfillable_units']:>10}")
+    for w in env.warnings:
+        print(f"\n  ! {w}")
+    print("\n  Feed these into the reorder engine with `daily` once velocity history "
+          "exists — reorder points need trailing sales, not a single snapshot.")
+    return 0
+
+
+def cmd_amazon_orders(args, policy, store) -> int:
+    env = _amazon(policy).fetch_orders(since=args.since)
+    _hr(f"AMAZON ORDERS SINCE {args.since}")
+    print(f"  source: {env.source} · {len(env.payload)} orders\n")
+    total = sum(r["order_total"] for r in env.payload)
+    for r in env.payload[:args.limit]:
+        print(f"  {r['order_id']}  {r['purchase_date'][:10]}  "
+              f"{r['status']:<12}{r['channel']:<5}${r['order_total']:>8.2f}")
+    print(f"\n  Gross order value: ${total:,.2f} across {len(env.payload)} orders")
+    for w in env.warnings:
+        print(f"  ! {w}")
+    print("\n  Gross order value is not revenue and not profit — fees, refunds, and "
+          "ad spend all come out of it.")
+    return 0
+
+
+def cmd_amazon_offers(args, policy, store) -> int:
+    env = _amazon(policy).fetch_competitor_offers(args.asin)
+    _hr(f"COMPETITIVE OFFERS — {args.asin}")
+    print(f"  {env.payload['offer_count']} total offers\n")
+    print(f"  {'Seller':<14}{'Landed':>9}{'List':>9}{'Ship':>7}"
+          f"{'BuyBox':>8}{'FBA':>6}{'Rating':>8}{'Revs':>8}")
+    for o in sorted(env.payload["offers"], key=lambda x: x["price"]):
+        print(f"  {o['seller'][:13]:<14}${o['price']:>8.2f}${o['listing_price']:>8.2f}"
+              f"${o['shipping']:>6.2f}{'yes' if o['is_buybox'] else '-':>8}"
+              f"{'yes' if o['is_fba'] else '-':>6}{o['rating']:>8.1f}{o['review_count']:>8}")
+    for w in env.warnings:
+        print(f"\n  ! {w}")
+    print("\n  Run `price <sku>` to turn this into a recommendation — it applies the "
+          "profit floor these raw offers know nothing about.")
+    return 0
+
+
 def cmd_approvals(args, policy, store) -> int:
     pending = store.pending_approvals()
     _hr(f"PENDING APPROVALS ({len(pending)})")
@@ -319,7 +499,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", help="path to sqlite db")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("status", help="connections, gates, and journal state")
+    p_status = sub.add_parser("status", help="connections, gates, and journal state")
+    p_status.add_argument(
+        "--no-verify", action="store_true",
+        help="skip live API verification (offline / avoid burning rate limit)",
+    )
 
     p_daily = sub.add_parser("daily", help="run the full daily cycle and write the report")
     p_daily.add_argument("--date", help="report date (YYYY-MM-DD)")
@@ -340,6 +524,27 @@ def main(argv: list[str] | None = None) -> int:
     p_price.add_argument("--rating", type=float, default=4.4)
     p_price.add_argument("--reviews", type=int, default=120)
 
+    p_av = sub.add_parser("amazon-verify", help="verify the Amazon SP-API connection")
+
+    p_as = sub.add_parser("amazon-search", help="search the Amazon catalog")
+    p_as.add_argument("keywords", nargs="+")
+    p_as.add_argument("--pages", type=int, default=2)
+
+    p_af = sub.add_parser("amazon-fees",
+                          help="reconcile policy fees against Amazon's own calculation")
+    p_af.add_argument("asin")
+    p_af.add_argument("price", type=float)
+    p_af.add_argument("--fbm", action="store_true", help="merchant-fulfilled, not FBA")
+
+    sub.add_parser("amazon-inventory", help="live FBA inventory")
+
+    p_ao = sub.add_parser("amazon-orders", help="recent orders")
+    p_ao.add_argument("--since", default="")
+    p_ao.add_argument("--limit", type=int, default=25)
+
+    p_aof = sub.add_parser("amazon-offers", help="competitor offers for an ASIN")
+    p_aof.add_argument("asin")
+
     sub.add_parser("approvals", help="list actions awaiting human approval")
 
     p_ap = sub.add_parser("approve", help="approve a pending action")
@@ -357,6 +562,10 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
 
+    if getattr(args, "since", None) == "":
+        from datetime import datetime, timedelta, timezone
+        args.since = (datetime.now(timezone.utc) - timedelta(days=7)).date().isoformat()
+
     try:
         policy = load_policy(args.policy)
     except PolicyError as exc:
@@ -369,8 +578,26 @@ def main(argv: list[str] | None = None) -> int:
         "listing": cmd_listing, "suppliers": cmd_suppliers, "price": cmd_price,
         "approvals": cmd_approvals, "approve": cmd_approve, "outcome": cmd_outcome,
         "journal": cmd_journal,
+        "amazon-verify": cmd_amazon_verify, "amazon-search": cmd_amazon_search,
+        "amazon-fees": cmd_amazon_fees, "amazon-inventory": cmd_amazon_inventory,
+        "amazon-orders": cmd_amazon_orders, "amazon-offers": cmd_amazon_offers,
     }
-    return handlers[args.cmd](args, policy, store)
+    try:
+        return handlers[args.cmd](args, policy, store)
+    except ConnectorNotConfigured as exc:
+        # Correct refusal, but a traceback is the wrong way to say it.
+        print(f"\nNOT CONFIGURED\n  {exc}", file=sys.stderr)
+        print("\n  Run `status` to see every missing variable.", file=sys.stderr)
+        return 2
+    except SPAPIError as exc:
+        print(f"\nAMAZON API ERROR\n  {exc}", file=sys.stderr)
+        if exc.request_id:
+            print(f"\n  Amazon request id: {exc.request_id} "
+                  "(quote this in a Selling Partner support case).", file=sys.stderr)
+        return 3
+    except WriteNotPermitted as exc:
+        print(f"\nBLOCKED\n  {exc}", file=sys.stderr)
+        return 4
 
 
 if __name__ == "__main__":

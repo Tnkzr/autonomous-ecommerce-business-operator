@@ -13,9 +13,12 @@ journaled so the system can be measured over time.
 
 ## Read this first
 
-**No marketplace is connected.** This repository contains the operator; it does
-not contain your business. Until credentials exist it runs in **advisory mode**
-on seed data, and:
+**Amazon SP-API is fully implemented** (`connectors/amazon/`). The other four
+marketplaces are still declarations.
+
+**No marketplace is connected in this checkout.** This repository contains the
+operator; it does not contain your business. Until credentials exist it runs in
+**advisory mode** on seed data, and:
 
 - it cannot read your real sales, inventory, ads, or reviews;
 - it will not write to, publish on, or spend money through any account;
@@ -45,8 +48,22 @@ python3 -m operator_core.cli price SEED-BAMBOO-ORG-01
 python3 -m operator_core.cli approvals                # what needs your sign-off
 python3 -m operator_core.cli approve <id> --by "Your Name"
 python3 -m operator_core.cli outcome <id> --met true --note "sold through in 38d"
-python3 -m unittest tests.test_operator                # 75 tests
+python3 -m unittest tests.test_operator tests.test_amazon   # 130 tests
 ```
+
+### Amazon commands (require live credentials)
+
+```bash
+python3 -m operator_core.cli amazon-verify                 # prove auth works
+python3 -m operator_core.cli amazon-search "drawer organizer"
+python3 -m operator_core.cli amazon-fees B08XXXXXXX 34.99  # reconcile fees
+python3 -m operator_core.cli amazon-inventory
+python3 -m operator_core.cli amazon-orders --since 2026-07-01
+python3 -m operator_core.cli amazon-offers B08XXXXXXX
+```
+
+`status` verifies every configured connection by calling the API. Use
+`status --no-verify` to skip the network round trip.
 
 ## How it is organised
 
@@ -65,7 +82,8 @@ python3 -m unittest tests.test_operator                # 75 tests
 | `store.py` | SQLite decision journal, metrics, price and supplier history. |
 | `reporting.py` | The daily report, including the provenance banner. |
 | `pipeline.py` | The daily run that wires it all together. |
-| `connectors/` | Per-marketplace adapters. Fail loudly when unconfigured. |
+| `connectors/amazon/` | SP-API: auth → transport → client → connector. |
+| `connectors/` | Other marketplace adapters. Fail loudly when unconfigured. |
 
 ## The policy file is the constitution
 
@@ -84,6 +102,51 @@ Currently enforced:
   order with a new supplier, and for publishing any listing
 - Eight actions that are never autonomous at any value (transferring funds,
   changing payout details, responding to IP claims, and similar)
+
+## Amazon SP-API
+
+Implemented across four layers, each independently testable:
+
+| Layer | Responsibility |
+|---|---|
+| `auth.py` | LWA token exchange and caching. Refreshes at 80% of lifetime so no request goes out on a nearly-dead token. Secrets are redacted from `__repr__`. |
+| `transport.py` | Per-operation token-bucket rate limiting, retry with backoff, `Retry-After` handling, error translation. |
+| `client.py` | One method per Amazon operation, with pagination and page caps. |
+| `connector.py` | Maps responses into the operator's domain models, tagged `live`. |
+
+Operations wired: Sellers (`getMarketplaceParticipations`), Catalog Items
+2022-04-01 (search + get), Product Pricing v0 (competitive pricing, item
+offers), Product Fees v0 (fee estimates), FBA Inventory v1, Listings Items
+2021-08-01 (get/put/patch, price, quantity), Orders v0 (+ order items),
+Reports 2021-06-30 (create → poll → download → parse), Tokens 2021-03-01 (RDT).
+
+Things that took deliberate care:
+
+- **Region is derived from the marketplace ID, not configured separately.** A
+  wrong region authenticates fine and returns empty results, which reads as
+  "no sales" rather than "misconfigured". `verify_connection` also checks the
+  configured marketplace is one the seller actually sells in.
+- **Price patches target `purchasable_offer`, not `list_price`.** The latter is
+  the manufacturer's list price; patching it does not change what customers pay.
+- **`productType` is read from the listing, never guessed.** A patch with the
+  wrong product type is rejected.
+- **Landed price includes shipping.** Comparing an FBA listing price against an
+  MFN listing price without shipping makes the MFN rival look cheaper than it is.
+- **Report documents are fetched without auth headers.** The URL is a pre-signed
+  S3 link; sending the SP-API token there would leak a live credential to a
+  third-party host.
+- **`ACCEPTED` is not `applied`.** Amazon accepting a submission means the
+  payload was well-formed. The connector says so rather than reporting success.
+- **Reviews and ads raise instead of returning empty.** SP-API has no review
+  endpoint and scraping breaches the Conditions of Use; ads live on a separate
+  API. An empty list would report a badly-reviewed product as clean.
+
+### Fee reconciliation
+
+`amazon-fees <ASIN> <price>` calls Product Fees v0 and diffs Amazon's own
+calculation against `[fees.amazon]` in the policy. This is the highest-value
+thing to run first: those estimates drive every profit figure, price floor, and
+break-even ACOS in the system.
 
 ## Design decisions worth knowing
 
@@ -143,12 +206,15 @@ so when the sample is too small to mean anything.
 
 1. Provision credentials for each marketplace (`status` lists the exact
    variables and links the API docs).
-2. Implement the read methods in `connectors/marketplaces.py`. Each class
-   documents its endpoints and its main gotcha. Start with reads only.
-3. **Reconcile the fee models in `[fees.*]` against real settlement reports.**
-   The shipped values are reasonable estimates, not your actual fees. Wrong fees
-   mean confidently wrong profit on every downstream decision — this is the
-   single highest-value calibration step.
+2. Run `amazon-verify`. It exercises the full chain — refresh token, LWA
+   exchange, app authorisation, region routing — and diagnoses what is wrong
+   rather than throwing. For the other four marketplaces, implement the read
+   methods in `connectors/marketplaces.py`; each class documents its endpoints
+   and main gotcha.
+3. **Reconcile the fee models in `[fees.*]`.** Run `amazon-fees` on several
+   representative ASINs and update the policy. The shipped values are reasonable
+   estimates, not your actual fees. Wrong fees mean confidently wrong profit on
+   every downstream decision — this is the single highest-value calibration step.
 4. Run in advisory mode for a few weeks. Record outcomes with the `outcome`
    command. Compare recommendations against what you would have done.
 5. Only then consider `live_trading_enabled = true`, and even then the approval
@@ -156,6 +222,13 @@ so when the sample is too small to mean anything.
 
 ## Limitations
 
+- **The Amazon integration has never executed against a live account.** Every
+  path is covered by offline tests against scripted responses shaped like
+  Amazon's, but scripted responses are not the real API. Run reads first,
+  compare a day's orders against Seller Central by hand, and only then consider
+  enabling writes.
+- Advertising is not implemented. It requires the separate Amazon Ads API.
+- Reviews are not retrievable via SP-API at all.
 - Fee schedules are estimates until reconciled (see above).
 - The IP and hazmat screens are keyword heuristics tuned to over-flag. They are
   a triage layer, not a legal opinion, and they will not catch a design patent

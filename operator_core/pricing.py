@@ -111,12 +111,25 @@ def recommend_price(
         )
 
         if lowest.price < floor:
+            # Treat the sub-floor seller as an outlier rather than the market:
+            # price to the credible field (the median) but never below the floor.
+            proposed = max(floor, min(current_price, median_rival))
             rationale.append(
                 f"Lowest rival ${lowest.price:.2f} sits below our floor ${floor:.2f}. "
                 "Not following — their cost base is not ours, and matching would sell "
                 "at a loss. Competing on content and reviews instead."
             )
-            proposed = max(floor, min(current_price, median_rival))
+            if proposed < current_price:
+                rationale.append(
+                    f"Excluding that outlier, pricing to the credible field at "
+                    f"${proposed:.2f} (median ${median_rival:.2f}), still "
+                    f"${proposed - floor:.2f} above the floor."
+                )
+            else:
+                rationale.append(
+                    f"Holding at ${proposed:.2f} — the rest of the field is at or "
+                    "above our current price."
+                )
         elif we_are_stronger:
             premium = money(median_rival * 1.03)
             rationale.append(
