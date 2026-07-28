@@ -1,0 +1,226 @@
+# =============================================================================
+# OPERATOR POLICY
+# =============================================================================
+# This file is the operator's constitution. Every automated decision is checked
+# against these values. Code reads this file; it does not hardcode thresholds.
+#
+# Change a number here and the whole system's behaviour changes. Nothing in the
+# engines may override it.
+# =============================================================================
+
+[meta]
+business_name = "Unnamed Store"
+base_currency = "USD"
+# Set to false until live marketplace credentials are wired and verified.
+# While false, every connector refuses to perform writes of any kind.
+live_trading_enabled = false
+
+
+# -----------------------------------------------------------------------------
+# PRODUCT SELECTION GATES
+# A candidate must pass ALL of these to be recommended. No exceptions in code.
+# -----------------------------------------------------------------------------
+[selection]
+min_roi_pct = 40.0                  # (net profit / landed cost) * 100
+min_margin_pct = 30.0               # (net profit / sale price) * 100
+min_supplier_rating = 4.8
+max_shipping_days = 12              # waived when the offer is domestic stock
+max_competition_score = 70.0        # 0-100, higher = more crowded; see screening.py
+min_monthly_demand_units = 100      # below this, the unit economics never matter
+max_review_count_of_top_rival = 5000
+min_price = 12.00                   # sub-$12 items rarely survive ad costs
+max_price = 300.00                  # above this, returns/chargeback risk climbs
+
+# Categories that require documented Amazon approval before ANY spend.
+gated_categories = [
+  "Automotive", "Jewelry", "Watches", "Grocery", "Beauty (Topical)",
+  "Dietary Supplements", "Toys (Q4)", "Fine Art", "Collectible Coins",
+  "Major Appliances", "Music/DVD", "Postage Stamps",
+]
+
+# Hard blocks. A candidate matching any of these is rejected outright and the
+# rejection is journaled. These are compliance rules, not preferences.
+[selection.prohibited]
+hazmat_terms = [
+  "lithium battery", "lithium-ion", "aerosol", "flammable", "butane", "propane",
+  "compressed gas", "corrosive", "oxidizer", "pesticide", "insecticide",
+  "fertilizer", "magnet set", "lighter fluid", "nail polish remover",
+  "hand sanitizer", "alcohol wipes", "paint thinner", "acetone", "bleach",
+  "airbag", "fireworks", "ammunition", "e-cigarette", "vape", "propellant",
+]
+medical_claim_terms = [
+  "cures", "cure ", "treats", "treatment for", "prevents disease", "fda approved",
+  "clinically proven", "heals", "therapeutic", "diagnose", "medical grade",
+  "anti-cancer", "covid", "antibacterial", "antiviral", "pain relief",
+  "reduces inflammation", "lowers blood pressure", "weight loss guaranteed",
+]
+# Brand/IP landmines. Matching does not prove infringement, but it forces the
+# candidate to a human for a documented clearance decision.
+trademark_terms = [
+  "disney", "marvel", "pixar", "star wars", "nike", "adidas", "supreme",
+  "louis vuitton", "gucci", "chanel", "rolex", "apple", "airpods", "iphone",
+  "samsung", "lego", "pokemon", "nintendo", "sanrio", "hello kitty", "barbie",
+  "harry potter", "nfl", "nba", "mlb", "olympic", "yeti", "stanley cup",
+  "peppa pig", "bluey", "squishmallow", "north face", "patagonia", "lululemon",
+]
+copyright_terms = [
+  "official merchandise", "licensed character", "movie replica", "album art",
+  "character print", "fan art", "inspired by disney", "replica prop",
+]
+# Utility patent risk: crowded, heavily-litigated mechanical niches.
+patent_risk_terms = [
+  "fidget spinner", "hoverboard", "pop socket", "popsocket", "instant pot",
+  "air fryer basket", "gravity blanket", "collapsible straw", "spiralizer",
+  "self-stirring mug", "magsafe", "airtag holder",
+]
+
+
+# -----------------------------------------------------------------------------
+# SUPPLIER SCORECARD
+# Weights must sum to 1.0; enforced at load time.
+# -----------------------------------------------------------------------------
+[suppliers]
+min_quote_count = 2                 # never choose without a real comparison
+sample_required_before_first_po = true
+
+[suppliers.weights]
+landed_cost = 0.30
+shipping_speed = 0.20
+quality = 0.25
+communication = 0.10
+inventory_stability = 0.15
+
+
+# -----------------------------------------------------------------------------
+# MARKETPLACE FEE MODELS
+# These drive every profit calculation. They are estimates and MUST be
+# reconciled against real settlement reports once live data exists.
+# Wrong numbers here mean confidently wrong profit. Treat as provisional.
+# -----------------------------------------------------------------------------
+[fees.amazon]
+referral_pct = 15.0
+fulfillment_flat = 4.75             # FBA pick/pack, standard-size average
+storage_per_unit_month = 0.28
+refund_admin_pct = 2.0
+expected_return_rate_pct = 5.0
+closing_fee = 0.0
+
+[fees.shopify]
+referral_pct = 0.0
+payment_pct = 2.9
+payment_flat = 0.30
+fulfillment_flat = 5.50             # 3PL pick/pack + average parcel
+storage_per_unit_month = 0.20
+expected_return_rate_pct = 4.0
+
+[fees.walmart]
+referral_pct = 12.0
+fulfillment_flat = 5.10             # WFS standard
+storage_per_unit_month = 0.25
+expected_return_rate_pct = 5.0
+
+[fees.ebay]
+referral_pct = 13.25                # final value fee
+payment_flat = 0.30
+fulfillment_flat = 5.75
+storage_per_unit_month = 0.15
+expected_return_rate_pct = 6.0
+
+[fees.tiktok]
+referral_pct = 8.0                  # commission
+payment_pct = 2.0
+fulfillment_flat = 5.00
+storage_per_unit_month = 0.20
+expected_return_rate_pct = 9.0      # social commerce returns run high
+
+
+# -----------------------------------------------------------------------------
+# PRICING
+# -----------------------------------------------------------------------------
+[pricing]
+# The repricer may never cross these, whatever a competitor does.
+absolute_floor_margin_pct = 15.0    # hard stop; below this we do not sell
+target_margin_pct = 32.0
+max_daily_price_change_pct = 8.0    # avoid whipsawing the Buy Box / shoppers
+min_hours_between_changes = 12
+undercut_amount = 0.05              # when undercutting is justified
+# Price wars destroy categories. If a rival is below our floor, we hold and
+# compete on content instead of following them down.
+allow_loss_leader = false
+
+
+# -----------------------------------------------------------------------------
+# INVENTORY
+# -----------------------------------------------------------------------------
+[inventory]
+service_level_z = 1.65              # ~95% in-stock service level
+default_lead_time_days = 30
+lead_time_variance_days = 7
+review_period_days = 7
+target_days_of_cover = 60
+critical_days_of_cover = 21         # below this = reorder alarm
+overstock_days_of_cover = 120       # above this = liquidate / promote
+min_order_quantity_default = 50
+
+
+# -----------------------------------------------------------------------------
+# ADVERTISING
+# -----------------------------------------------------------------------------
+[advertising]
+target_acos_pct = 25.0              # at/below = healthy
+max_acos_pct = 35.0                 # above = intervene
+break_even_acos_source = "margin"   # break-even ACOS derived from real margin
+min_clicks_before_judgement = 15    # do not act on noise
+min_spend_before_judgement = 15.00
+pause_acos_pct = 60.0               # sustained above this with no sales = pause
+zero_sale_click_threshold = 25      # clicks, no orders => negative keyword
+budget_increase_step_pct = 20.0
+max_budget_increase_pct_per_week = 50.0
+scale_only_if_acos_below_pct = 20.0
+
+
+# -----------------------------------------------------------------------------
+# RISK / SPEND CONTROL
+# The operator may act freely below these lines and never above them.
+# -----------------------------------------------------------------------------
+[risk]
+max_single_po_usd = 2000.00
+max_daily_spend_usd = 5000.00
+max_open_po_exposure_usd = 15000.00
+max_new_skus_per_week = 3
+min_cash_buffer_usd = 3000.00       # never spend below this reserve
+
+# Actions the operator is NEVER permitted to take autonomously, at any value.
+# Declared before the sub-table below: in TOML, keys after a [risk.xxx] header
+# belong to that sub-table, not to [risk].
+never_autonomous = [
+  "close_or_suspend_account",
+  "change_bank_or_payout_details",
+  "accept_marketplace_legal_terms",
+  "respond_to_ip_infringement_claim",
+  "issue_refund_above_threshold",
+  "delete_listing_with_review_history",
+  "share_credentials",
+  "transfer_funds",
+]
+
+# Anything at or above these values requires explicit human approval,
+# regardless of projected profit.
+[risk.approval_thresholds]
+purchase_order_usd = 500.00
+price_change_pct = 10.0
+ad_budget_change_usd = 100.00
+new_supplier_first_order = true     # always approve a first order with anyone
+listing_publish = true              # a live listing is a public commitment
+account_level_setting_change = true
+
+
+# -----------------------------------------------------------------------------
+# REPORTING
+# -----------------------------------------------------------------------------
+[reporting]
+timezone = "America/New_York"
+daily_report_hour = 7
+top_n_products = 5
+worst_n_products = 5
+output_dir = "reports"

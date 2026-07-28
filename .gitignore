@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local operational state — the journal and metrics are environment-specific.
+data/*.db
+data/*.db-journal
+
+# Generated reports. Regenerate with `python3 -m operator_core.cli daily`.
+reports/*.md
+
+# Never commit marketplace credentials.
+.env
+.env.*
+*credentials*.json
