@@ -16,3 +16,6 @@ reports/*.md
 .env.*
 !.env.example
 *credentials*.json
+
+# Imported Seller Center data is the operator's own business data, not source.
+data/imported_*.json

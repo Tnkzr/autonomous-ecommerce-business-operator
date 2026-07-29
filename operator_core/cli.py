@@ -1028,6 +1028,114 @@ def cmd_signals(args, policy, store) -> int:
     return 0
 
 
+def cmd_tiktok_import(args, policy, store) -> int:
+    """Import a Seller Center CSV export.
+
+    This is a real data path, not a workaround: the export contains the same
+    figures the API would return, moved by hand. Provenance is recorded as
+    `import` rather than `live` so reports can say "your real numbers, exported
+    on the 3rd" instead of either overstating freshness or dismissing them.
+    """
+    from connectors.tiktok import (
+        daily_performance_from_orders,
+        detect_export_kind,
+        import_orders,
+        import_products,
+        import_settlements,
+    )
+
+    path = Path(args.file)
+    if not path.exists():
+        print(f"No such file: {path}", file=sys.stderr)
+        return 1
+
+    kind = args.kind or detect_export_kind(path)
+    if kind == "unknown":
+        print(f"Could not identify {path} as a TikTok export.", file=sys.stderr)
+        print("Pass --kind orders|settlements|products to force it.", file=sys.stderr)
+        return 1
+
+    importer = {"orders": import_orders, "settlements": import_settlements,
+                "products": import_products}[kind]
+    try:
+        result = importer(path)
+    except ValueError as exc:
+        print(f"IMPORT FAILED\n  {exc}", file=sys.stderr)
+        return 1
+
+    _hr(f"IMPORTED {result.count} {kind.upper()} ROWS")
+    print(f"  Source:  {result.source_path}")
+    print(f"  Columns: {len(result.column_map)} matched")
+    if result.skipped:
+        print(f"  Skipped: {result.skipped} unusable row(s)")
+
+    if kind == "orders":
+        sales = [r for r in result.rows if r["is_sale"]]
+        revenue = sum(r["order_total"] for r in sales)
+        units = sum(r["quantity"] for r in sales)
+        buyers = {r["buyer_key"] for r in sales if r["buyer_key"]}
+        print(f"\n  Settled order lines: {len(sales)} · {units} units · "
+              f"{revenue:,.2f} gross")
+        print(f"  Identified buyers:   {len(buyers)}")
+
+        if not args.dry_run:
+            for r in result.rows:
+                store.upsert_tiktok_order(
+                    order_id=f"{r['order_id']}:{r['sku']}",
+                    created_at=r["created_at"], status=r["status"],
+                    buyer_key=r["buyer_key"], buyer_total=r["order_total"],
+                    currency=r["currency"], sku=r["sku"],
+                    units=r["quantity"], data_source="import",
+                )
+            stats = store.repeat_purchase_stats()
+            print(f"\n  Repeat purchase: "
+                  + (f"{stats['repeat_rate_pct']:.1f}% across "
+                     f"{stats['buyers_identified']} buyers"
+                     if stats["repeat_rate_pct"] is not None else "not measurable"))
+            print(f"  {stats['note']}")
+
+            series = daily_performance_from_orders(result.rows)
+            print(f"\n  Built daily series for {len(series)} SKU(s) — enough for "
+                  "trend classification")
+            print("  once each has 14+ days. Page views are absent from an order")
+            print("  export, so conversion rate stays unmeasured rather than guessed.")
+            out = Path("data/imported_tiktok_performance.json")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(series, indent=2))
+            print(f"  Written to {out}")
+
+    elif kind == "settlements":
+        revenue = sum(r["revenue"] for r in result.rows)
+        fees = sum(r["fees"] + r["affiliate_commission"] for r in result.rows)
+        settled = sum(r["settlement_amount"] for r in result.rows)
+        print(f"\n  Revenue:    {revenue:,.2f}")
+        print(f"  Deductions: {fees:,.2f}")
+        print(f"  Settled:    {settled:,.2f}")
+        if revenue > 0:
+            take = fees / revenue * 100
+            est = (float(policy.fees_for("tiktok")["referral_pct"])
+                   + float(policy.fees_for("tiktok")["payment_pct"])
+                   + float(policy.fees_for("tiktok")["affiliate_commission_pct"]))
+            print(f"\n  Realised take rate: {take:.2f}%")
+            print(f"  Policy estimate:    {est:.2f}%  (drift {take - est:+.2f}pp)")
+            if abs(take - est) > 3.0:
+                print("\n  These differ materially. Update [fees.tiktok] before")
+                print("  trusting any margin, price floor, or break-even in the")
+                print("  system — all of them are computed from the estimate.")
+
+    elif kind == "products":
+        live = [r for r in result.rows if r["status"].lower() in ("live", "active", "")]
+        print(f"\n  {len(live)} live of {result.count} products")
+        print(f"  Total stock: {sum(r['stock'] for r in result.rows):,} units")
+
+    for w in result.warnings:
+        print(f"\n  ! {w}")
+
+    if args.dry_run:
+        print("\n  [dry run — nothing written]")
+    return 0
+
+
 def cmd_approvals(args, policy, store) -> int:
     pending = store.pending_approvals()
     _hr(f"PENDING APPROVALS ({len(pending)})")
@@ -1146,6 +1254,13 @@ def main(argv: list[str] | None = None) -> int:
     p_weekly = sub.add_parser("weekly", help="weekly business review")
     p_weekly.add_argument("--week-ending", dest="week_ending", default=None)
 
+    p_imp = sub.add_parser("tiktok-import",
+                           help="import a Seller Center CSV export (no API needed)")
+    p_imp.add_argument("file")
+    p_imp.add_argument("--kind", choices=["orders", "settlements", "products"],
+                       default=None)
+    p_imp.add_argument("--dry-run", action="store_true", dest="dry_run")
+
     p_ttd = sub.add_parser("tiktok-daily",
                            help="TikTok Shop daily run (the main loop)")
     p_ttd.add_argument("--date", default=None)
@@ -1219,7 +1334,7 @@ def main(argv: list[str] | None = None) -> int:
         "amazon-verify": cmd_amazon_verify, "amazon-search": cmd_amazon_search,
         "amazon-fees": cmd_amazon_fees, "amazon-inventory": cmd_amazon_inventory,
         "amazon-orders": cmd_amazon_orders, "amazon-offers": cmd_amazon_offers,
-        "tiktok-daily": cmd_tiktok_daily, "signal": cmd_signal,
+        "tiktok-import": cmd_tiktok_import, "tiktok-daily": cmd_tiktok_daily, "signal": cmd_signal,
         "signals": cmd_signals,
         "tiktok-verify": cmd_tiktok_verify, "tiktok-products": cmd_tiktok_products,
         "tiktok-orders": cmd_tiktok_orders,

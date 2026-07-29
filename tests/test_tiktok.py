@@ -519,7 +519,11 @@ class TestVerification(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             r = TikTokShopConnector().verify_connection()
         self.assertFalse(r["ok"])
-        self.assertIn("Missing credentials", r["detail"])
+        # The message must name the variables to set, not just say "missing" —
+        # a status command that does not tell you what to do is a status command
+        # you have to go read the source to act on.
+        self.assertIn("TIKTOK_APP_KEY", r["detail"])
+        self.assertIn("TIKTOK_REFRESH_TOKEN", r["detail"])
 
     def test_successful_verification(self):
         conn, _s, _c = build_connector([tt_ok(TT_SHOPS)])

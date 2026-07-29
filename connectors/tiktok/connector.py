@@ -15,6 +15,12 @@ from typing import Any
 from ..base import ConnectorNotConfigured, DataEnvelope, MarketplaceConnector
 from .auth import TikTokCredentials, TokenProvider
 from .client import ShopInfo, TikTokShopClient
+from .credentials import (
+    CredentialSource,
+    CredentialsUnavailable,
+    FileCredentials,
+    default_source,
+)
 from .regions import resolve
 from .transport import TikTokAPIError, Transport
 
@@ -66,10 +72,15 @@ class TikTokShopConnector(MarketplaceConnector):
     docs_url = "https://partner.tiktokshop.com/docv2/page/api-overview"
 
     def __init__(self, *, allow_writes: bool = False, transport: Transport | None = None,
-                 client: TikTokShopClient | None = None) -> None:
+                 client: TikTokShopClient | None = None,
+                 credentials: CredentialSource | None = None) -> None:
         super().__init__(allow_writes=allow_writes)
         self._client = client
         self._transport = transport
+        # Where credentials come from is injected, so the rest of this class
+        # never learns whether they live in the environment, a file, or a
+        # secrets manager. Swapping the source changes nothing below.
+        self._credentials = credentials or default_source()
         self._shop: ShopInfo | None = None
         self._shops: list[ShopInfo] = []
         self.auth_warnings: list[str] = []
@@ -113,20 +124,20 @@ class TikTokShopConnector(MarketplaceConnector):
         if self._client is not None:
             return self._client
 
-        self.require_credentials()
+        creds = self._credentials.resolve()   # raises CredentialsUnavailable
         base_url, _currency, _lag = resolve(self.region, sandbox=self.sandbox)
 
-        tokens = TokenProvider(TikTokCredentials(
-            app_key=os.environ["TIKTOK_APP_KEY"],
-            app_secret=os.environ["TIKTOK_APP_SECRET"],
-            refresh_token=os.environ["TIKTOK_REFRESH_TOKEN"],
-            shop_id=self.shop_id,
-        ))
+        # A file source can absorb TikTok's refresh-token rotation; an
+        # environment variable cannot, so the callback is wired only when the
+        # source can actually persist.
+        on_rotated = (self._credentials.persist_refresh_token
+                      if isinstance(self._credentials, FileCredentials) else None)
+        tokens = TokenProvider(creds, on_refresh_token_rotated=on_rotated)
 
         transport = self._transport or Transport(
             base_url=base_url,
-            app_key=os.environ["TIKTOK_APP_KEY"],
-            app_secret=os.environ["TIKTOK_APP_SECRET"],
+            app_key=creds.app_key,
+            app_secret=creds.app_secret,
             token_provider=tokens,
         )
         client = TikTokShopClient(transport, shop_id=self.shop_id)
@@ -159,9 +170,11 @@ class TikTokShopConnector(MarketplaceConnector):
             "sandbox": self.sandbox,
         }
 
-        missing = self.missing_credentials()
-        if missing:
-            result["detail"] = f"Missing credentials: {', '.join(missing)}"
+        cred_status = self._credentials.status()
+        result["credential_source"] = cred_status.source_name
+        if not cred_status.available:
+            result["detail"] = cred_status.detail
+            result["remedy"] = cred_status.remedy
             return result
 
         try:
