@@ -9,6 +9,7 @@ without being labelled.
 from __future__ import annotations
 
 import json
+from datetime import date
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ from .advertising import (
     review_keywords,
 )
 from .config import Policy
-from .economics import economics_for_candidate
+from .economics import after_tax_roi_pct, economics_for_candidate
 from .inventory import plan_all
 from .models import (
     Campaign,
@@ -34,7 +35,25 @@ from .models import (
     Supplier,
     today_iso,
 )
+from .account_health import assess as assess_account_health, blocks_scaling
+from .capital import (
+    AllocationRequest,
+    CapitalState,
+    Position,
+    allocate,
+    concentration_report,
+    portfolio_turns,
+)
 from .pricing import recommend_price
+from .signals import (
+    Signal,
+    SignalDirection,
+    assess_confidence,
+    available_weight,
+    signal_from_sales_rank,
+    unavailable_sources_report,
+)
+from .suppliers import detect_deterioration
 from .reporting import ReportContext, build_daily_report, prior_period_dates, write_report
 from .reviews import analyse_reviews
 from .risk import SpendState
@@ -120,9 +139,34 @@ def run_daily(
     report_date = report_date or today_iso()
     ops, source = load_operations(operations_path)
 
+    # ---- market signals -------------------------------------------------
+    # Signals come from the seed file only when present. Nothing is synthesised:
+    # a candidate with no signal entry gets an empty list and scores 0
+    # confidence, which correctly reads as "unknown", not "bad".
+    confidence_by_sku = {}
+    raw_signals = ops.get("signals", {})
+    for sku, entries in raw_signals.items():
+        # `_`-prefixed keys are documentation in the seed file, not SKUs.
+        if sku.startswith("_") or not isinstance(entries, list):
+            continue
+        sigs = [
+            Signal(
+                source=e["source"],
+                direction=SignalDirection(e.get("direction", "NEUTRAL")),
+                strength=float(e.get("strength", 0.0)),
+                observed_at=e.get("observed_at", report_date),
+                detail=e.get("detail", ""),
+            )
+            for e in entries
+        ]
+        confidence_by_sku[sku] = assess_confidence(
+            policy, sku, sigs, today=date.fromisoformat(report_date)
+        )
+
     # ---- sourcing ------------------------------------------------------
     candidates = load_candidates(candidates_path)
-    screened = screen_all(policy, candidates)
+    by_sku_all = {c.sku: c for c in candidates}
+    screened = screen_all(policy, candidates, confidence_by_sku=confidence_by_sku)
     if journal:
         for r in screened:
             store.record_decision(
@@ -135,6 +179,10 @@ def run_daily(
                     "score": r.score,
                     "roi_pct": r.economics.roi_pct if r.economics else None,
                     "margin_pct": r.economics.margin_pct if r.economics else None,
+                    "after_tax_roi_pct": (
+                        after_tax_roi_pct(policy, r.economics) if r.economics else None),
+                    "confidence": (
+                        confidence_by_sku[r.sku].score if r.sku in confidence_by_sku else None),
                 },
                 expected_outcome=(
                     f"If sourced, expect ~{r.economics.margin_pct:.0f}% margin at "
@@ -215,7 +263,7 @@ def run_daily(
 
     # ---- pricing -------------------------------------------------------
     price_recs = []
-    by_sku = {c.sku: c for c in candidates}
+    by_sku = by_sku_all
     for sku, offers in ops.get("competitors", {}).items():
         cand = by_sku.get(sku)
         if not cand:
@@ -293,6 +341,98 @@ def run_daily(
         new_skus_this_week=int(ss.get("new_skus_this_week", 0)),
     )
 
+    # ---- account health -------------------------------------------------
+    health = assess_account_health(policy, "amazon", ops.get("account_health", {}))
+    hold_scaling, scaling_note = blocks_scaling(health)
+    if hold_scaling:
+        # Account health outranks growth: more volume through a failing process
+        # produces more defects, not more profit.
+        ad_actions = [a for a in ad_actions if a.action != "INCREASE_BUDGET"]
+        if journal:
+            store.record_decision(
+                domain="account_health", sku="_account",
+                action="hold_scaling",
+                rationale=scaling_note,
+                decision="HOLD",
+                inputs={"severity": health.severity.value,
+                        "breaches": [m.label for m in health.breaches]},
+                expected_outcome="Metrics recover before spend increases.",
+                requires_approval=bool(health.breaches),
+                dedupe_key=f"{report_date}|account_health|_account|hold",
+            )
+
+    # ---- capital --------------------------------------------------------
+    positions = [
+        Position(
+            sku=x["sku"], category=x.get("category", "uncategorised"),
+            supplier_id=x.get("supplier_id", "unknown"),
+            units_on_hand=int(x["on_hand_units"]),
+            units_inbound=int(x.get("inbound_units", 0)),
+            unit_cost=float(x.get("unit_cost", 0.0)),
+            annual_units_sold=float(x.get("daily_velocity", 0.0)) * 365,
+        )
+        for x in ops.get("inventory", [])
+    ]
+    capital_state = CapitalState(
+        total_capital_usd=float(policy.capital["total_capital_usd"]),
+        cash_available_usd=float(ss.get("cash_available_usd", 0.0)),
+        positions=positions,
+    )
+
+    requests = []
+    for plan in plans:
+        if plan.recommended_order_units <= 0 or plan.estimated_order_cost <= 0:
+            continue
+        src = next((x for x in ops.get("inventory", []) if x["sku"] == plan.sku), {})
+        cand = by_sku_all.get(plan.sku)
+        conf = confidence_by_sku.get(plan.sku)
+        requests.append(AllocationRequest(
+            sku=plan.sku,
+            category=src.get("category", "uncategorised"),
+            supplier_id=src.get("supplier_id", "unknown"),
+            amount_usd=plan.estimated_order_cost,
+            expected_roi_pct=(
+                economics_for_candidate(policy, cand).roi_pct if cand else 40.0),
+            # No signal data means low confidence, not average confidence.
+            confidence_pct=conf.effective_score if conf else 35.0,
+            cash_cycle_days=int(src.get("lead_time_days", 30)) + int(plan.days_of_cover or 45),
+            rationale=plan.status,
+        ))
+
+    allocation_decisions, allocation_notes = allocate(policy, capital_state, requests)
+    if journal:
+        for d in allocation_decisions:
+            store.record_decision(
+                domain="capital", sku=d.request.sku,
+                action=f"allocate ${d.approved_amount:,.2f} of ${d.request.amount_usd:,.2f}",
+                rationale="; ".join(d.reasons),
+                decision="APPROVE" if d.accepted else "REJECT",
+                inputs={"risk_adjusted_roi": d.risk_adjusted_roi_pct,
+                        "annualised_roi": d.annualised_roi_pct, "rank": d.rank},
+                expected_outcome=(
+                    f"Risk-adjusted return {d.risk_adjusted_roi_pct:.0f}% "
+                    f"over a {d.request.cash_cycle_days}-day cycle."
+                ),
+                dedupe_key=f"{report_date}|capital|{d.request.sku}|allocate",
+            )
+
+    # ---- supplier health ------------------------------------------------
+    supplier_alerts = []
+    for sid in {p.supplier_id for p in positions if p.supplier_id != "unknown"}:
+        supplier_alerts.extend(detect_deterioration(store.supplier_trend(sid)))
+    if journal:
+        for a in supplier_alerts:
+            store.record_decision(
+                domain="suppliers", sku=a.supplier_id,
+                action=f"supplier_alert:{a.metric}",
+                rationale=f"{a.detail} {a.recommendation}",
+                decision="NEEDS_HUMAN_APPROVAL" if a.severity == "CRITICAL" else "HOLD",
+                inputs={"severity": a.severity, "metric": a.metric},
+                expected_outcome="Backup source qualified or supplier corrected.",
+                requires_approval=a.severity == "CRITICAL",
+                dedupe_key=f"{report_date}|suppliers|{a.supplier_id}|{a.metric}",
+            )
+
     ctx = ReportContext(
         report_date=report_date,
         data_source=source,
@@ -306,6 +446,15 @@ def run_daily(
         price_recommendations=price_recs,
         spend_state=spend_state,
         connector_status=all_status(),
+        account_health=health,
+        capital_state=capital_state,
+        allocation_decisions=allocation_decisions,
+        allocation_notes=allocation_notes,
+        concentration=concentration_report(policy, capital_state),
+        turns=portfolio_turns(policy, capital_state),
+        supplier_alerts=supplier_alerts,
+        signal_coverage_pct=available_weight(policy),
+        unavailable_signals=unavailable_sources_report(policy),
     )
 
     content = build_daily_report(policy, ctx, store)

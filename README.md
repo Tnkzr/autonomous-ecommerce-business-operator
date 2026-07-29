@@ -45,10 +45,11 @@ python3 -m operator_core.cli screen -v                # screen candidates
 python3 -m operator_core.cli listing SEED-PETBRUSH-03 # full listing draft
 python3 -m operator_core.cli suppliers SEED-BAMBOO-ORG-01 --volume 8000
 python3 -m operator_core.cli price SEED-BAMBOO-ORG-01
+python3 -m operator_core.cli capital                  # allocation, concentration, turns
 python3 -m operator_core.cli approvals                # what needs your sign-off
 python3 -m operator_core.cli approve <id> --by "Your Name"
 python3 -m operator_core.cli outcome <id> --met true --note "sold through in 38d"
-python3 -m unittest tests.test_operator tests.test_amazon   # 130 tests
+python3 -m unittest tests.test_operator tests.test_amazon tests.test_charter  # 184 tests
 ```
 
 ### Amazon commands (require live credentials)
@@ -78,6 +79,9 @@ python3 -m operator_core.cli amazon-offers B08XXXXXXX
 | `inventory.py` | Safety stock, reorder point, stockout prediction, overstock detection. |
 | `advertising.py` | Per-SKU break-even ACOS, campaign verdicts, keyword harvest/negate. |
 | `reviews.py` | Defect-theme clustering and account-risk escalation. |
+| `signals.py` | Market signals, confidence scoring, source availability. |
+| `capital.py` | Allocation, concentration limits, inventory turns. |
+| `account_health.py` | Marketplace performance metrics and scaling brake. |
 | `risk.py` | The spend gate. Every money-touching action passes through `authorise()`. |
 | `store.py` | SQLite decision journal, metrics, price and supplier history. |
 | `reporting.py` | The daily report, including the provenance banner. |
@@ -102,6 +106,11 @@ Currently enforced:
   order with a new supplier, and for publishing any listing
 - Eight actions that are never autonomous at any value (transferring funds,
   changing payout details, responding to IP claims, and similar)
+- 21% planning tax rate applied to profit — the KPI is after-tax
+- No SKU above 30% of deployed capital, no supplier above 45%, no category
+  above 50%; 35% of capital held in reserve
+- 3 corroborating signals and 60/100 confidence before a product is recommended
+- Account health limits mirroring Amazon's published targets, warning at 75%
 
 ## Amazon SP-API
 
@@ -147,6 +156,62 @@ Things that took deliberate care:
 calculation against `[fees.amazon]` in the policy. This is the highest-value
 thing to run first: those estimates drive every profit figure, price floor, and
 break-even ACOS in the system.
+
+## The charter engines
+
+The operating charter lives in `CLAUDE.md`. Clauses that are only prose are
+aspirations, so each one is enforced somewhere:
+
+**After-tax profit is the KPI.** `economics.after_tax_profit` applies the
+planning rate from `[tax]`. A 40% pre-tax ROI is roughly 32% after a 21% rate,
+and that gap decides marginal products. Losses are not assumed refundable — that
+would flatter a bad product.
+
+**Cash flow is modelled separately from profit.** `cash_flow_projection` returns
+days to first cash and days to full recovery. A profitable product on a 120-day
+cash cycle can still bankrupt a business that reorders on schedule.
+
+**Capital is allocated on risk-adjusted return, not headline ROI.** ROI is
+discounted by confidence and normalised to a 90-day cycle, because uncertainty
+and optimism look identical in a spreadsheet, and slow money is not the same as
+fast money.
+
+**Concentration limits bind even on the best product.** They are trimmed to the
+limit rather than refused where headroom exists. A SKU that is already the whole
+portfolio cannot be fixed by buying more of it — the fix is buying something else,
+and the system says so.
+
+**Confidence requires corroboration.** A candidate that clears every hard gate
+but has thin evidence is HELD, not approved — "we do not know yet" is a distinct
+answer from "no". Rankings use the score discounted by source coverage, so
+poorly-understood opportunities cannot outrank well-understood ones on
+optimistic arithmetic alone.
+
+**Account health brakes growth.** A breach or near-breach strips
+`INCREASE_BUDGET` actions from the day's recommendations. More volume through a
+failing process produces more defects, not more profit.
+
+**Suppliers are watched for drift.** Suppliers rarely fail suddenly — defect
+rates creep and ship dates slip a few days at a time. `detect_deterioration`
+compares recent performance against earlier, and every SKU gets a named backup
+or an explicit single-source warning.
+
+### Market signals: what is actually connected
+
+The charter asks for continuous monitoring of Amazon, Google Trends, TikTok,
+Reddit, Pinterest, YouTube, Meta, news, and economic indicators.
+
+**Only Amazon sales rank is connected — 30% of the weighted signal set.**
+
+`signals.py` declares all of them and reports each unconnected source with what
+it would take to wire it. Nothing is estimated to fill the gap: an unavailable
+source contributes zero and reduces coverage, rather than contributing a neutral
+50. `ConfidenceAssessment.effective_score` is the raw score times coverage, and
+that is what rankings use.
+
+This matters more than it looks. A guessed trend signal does not stay a guess —
+it survives into a purchase order and becomes inventory sitting in a warehouse.
+Run `capital` to see the current coverage and the gap list.
 
 ## Design decisions worth knowing
 
@@ -228,6 +293,14 @@ so when the sample is too small to mean anything.
   compare a day's orders against Seller Central by hand, and only then consider
   enabling writes.
 - Advertising is not implemented. It requires the separate Amazon Ads API.
+- Seven of nine market signal sources have no connector. Confidence scores are
+  computed from 30% of the intended evidence base and should be read as
+  provisional.
+- The tax model is a flat planning rate, not a tax engine. It does not handle
+  nexus, quarterly estimates, depreciation, or entity structure. It exists so
+  decisions are made on after-tax numbers, not to file anything.
+- Seasonality needs twelve months of the operator's own sales history before it
+  can contribute anything.
 - Reviews are not retrievable via SP-API at all.
 - Fee schedules are estimates until reconciled (see above).
 - The IP and hazmat screens are keyword heuristics tuned to over-flag. They are

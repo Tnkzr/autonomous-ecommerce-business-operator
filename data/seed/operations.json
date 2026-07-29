@@ -8,115 +8,497 @@
   },
   "inventory": [
     {
-      "sku": "SEED-BAMBOO-ORG-01", "marketplace": "amazon", "on_hand_units": 240,
-      "inbound_units": 0, "daily_velocity": 11.5, "velocity_stddev": 3.2,
-      "lead_time_days": 32, "unit_cost": 10.30, "moq": 200
+      "sku": "SEED-BAMBOO-ORG-01",
+      "marketplace": "amazon",
+      "on_hand_units": 240,
+      "inbound_units": 0,
+      "daily_velocity": 11.5,
+      "velocity_stddev": 3.2,
+      "lead_time_days": 32,
+      "unit_cost": 10.3,
+      "moq": 200,
+      "category": "Home & Kitchen",
+      "supplier_id": "SUP-A1"
     },
     {
-      "sku": "SEED-PETBRUSH-03", "marketplace": "shopify", "on_hand_units": 95,
-      "inbound_units": 0, "daily_velocity": 6.8, "velocity_stddev": 2.1,
-      "lead_time_days": 24, "unit_cost": 5.30, "moq": 300
+      "sku": "SEED-PETBRUSH-03",
+      "marketplace": "shopify",
+      "on_hand_units": 95,
+      "inbound_units": 0,
+      "daily_velocity": 6.8,
+      "velocity_stddev": 2.1,
+      "lead_time_days": 24,
+      "unit_cost": 5.3,
+      "moq": 300,
+      "category": "Pet Supplies",
+      "supplier_id": "SUP-C3"
     },
     {
-      "sku": "SEED-CABLEORG-06", "marketplace": "amazon", "on_hand_units": 1450,
-      "inbound_units": 500, "daily_velocity": 4.2, "velocity_stddev": 1.4,
-      "lead_time_days": 28, "unit_cost": 3.75, "moq": 500
+      "sku": "SEED-CABLEORG-06",
+      "marketplace": "amazon",
+      "on_hand_units": 1450,
+      "inbound_units": 500,
+      "daily_velocity": 4.2,
+      "velocity_stddev": 1.4,
+      "lead_time_days": 28,
+      "unit_cost": 3.75,
+      "moq": 500,
+      "category": "Office Products",
+      "supplier_id": "SUP-F6"
     },
     {
-      "sku": "SEED-MUGSET-07", "marketplace": "amazon", "on_hand_units": 310,
-      "inbound_units": 0, "daily_velocity": 0.0, "velocity_stddev": 0.0,
-      "lead_time_days": 30, "unit_cost": 6.20, "moq": 250
+      "sku": "SEED-MUGSET-07",
+      "marketplace": "amazon",
+      "on_hand_units": 310,
+      "inbound_units": 0,
+      "daily_velocity": 0.0,
+      "velocity_stddev": 0.0,
+      "lead_time_days": 30,
+      "unit_cost": 6.2,
+      "moq": 250,
+      "category": "Home & Kitchen",
+      "supplier_id": "SUP-D4"
     }
   ],
   "campaigns": [
     {
-      "campaign_id": "CMP-BAMBOO-AUTO", "name": "Bamboo Organizer - Auto",
-      "sku": "SEED-BAMBOO-ORG-01", "marketplace": "amazon",
-      "spend": 412.50, "sales": 2380.00, "clicks": 330, "impressions": 84000,
-      "orders": 68, "daily_budget": 25.00, "period_days": 30,
+      "campaign_id": "CMP-BAMBOO-AUTO",
+      "name": "Bamboo Organizer - Auto",
+      "sku": "SEED-BAMBOO-ORG-01",
+      "marketplace": "amazon",
+      "spend": 412.5,
+      "sales": 2380.0,
+      "clicks": 330,
+      "impressions": 84000,
+      "orders": 68,
+      "daily_budget": 25.0,
+      "period_days": 30,
       "product_margin_pct": 31.5
     },
     {
-      "campaign_id": "CMP-BAMBOO-EXACT", "name": "Bamboo Organizer - Exact",
-      "sku": "SEED-BAMBOO-ORG-01", "marketplace": "amazon",
-      "spend": 210.00, "sales": 1890.00, "clicks": 168, "impressions": 21000,
-      "orders": 54, "daily_budget": 15.00, "period_days": 30,
+      "campaign_id": "CMP-BAMBOO-EXACT",
+      "name": "Bamboo Organizer - Exact",
+      "sku": "SEED-BAMBOO-ORG-01",
+      "marketplace": "amazon",
+      "spend": 210.0,
+      "sales": 1890.0,
+      "clicks": 168,
+      "impressions": 21000,
+      "orders": 54,
+      "daily_budget": 15.0,
+      "period_days": 30,
       "product_margin_pct": 31.5
     },
     {
-      "campaign_id": "CMP-CABLE-BROAD", "name": "Cable Organizer - Broad",
-      "sku": "SEED-CABLEORG-06", "marketplace": "amazon",
-      "spend": 288.00, "sales": 0.0, "clicks": 240, "impressions": 96000,
-      "orders": 0, "daily_budget": 12.00, "period_days": 30,
+      "campaign_id": "CMP-CABLE-BROAD",
+      "name": "Cable Organizer - Broad",
+      "sku": "SEED-CABLEORG-06",
+      "marketplace": "amazon",
+      "spend": 288.0,
+      "sales": 0.0,
+      "clicks": 240,
+      "impressions": 96000,
+      "orders": 0,
+      "daily_budget": 12.0,
+      "period_days": 30,
       "product_margin_pct": 24.0
     },
     {
-      "campaign_id": "CMP-PET-PHRASE", "name": "Pet Brush - Phrase",
-      "sku": "SEED-PETBRUSH-03", "marketplace": "shopify",
-      "spend": 180.00, "sales": 410.00, "clicks": 145, "impressions": 30000,
-      "orders": 16, "daily_budget": 10.00, "period_days": 30,
+      "campaign_id": "CMP-PET-PHRASE",
+      "name": "Pet Brush - Phrase",
+      "sku": "SEED-PETBRUSH-03",
+      "marketplace": "shopify",
+      "spend": 180.0,
+      "sales": 410.0,
+      "clicks": 145,
+      "impressions": 30000,
+      "orders": 16,
+      "daily_budget": 10.0,
+      "period_days": 30,
       "product_margin_pct": 33.0
     },
     {
-      "campaign_id": "CMP-NEW-TEST", "name": "New SKU Test",
-      "sku": "SEED-MUGSET-07", "marketplace": "amazon",
-      "spend": 8.40, "sales": 0.0, "clicks": 7, "impressions": 1900,
-      "orders": 0, "daily_budget": 5.00, "period_days": 30,
+      "campaign_id": "CMP-NEW-TEST",
+      "name": "New SKU Test",
+      "sku": "SEED-MUGSET-07",
+      "marketplace": "amazon",
+      "spend": 8.4,
+      "sales": 0.0,
+      "clicks": 7,
+      "impressions": 1900,
+      "orders": 0,
+      "daily_budget": 5.0,
+      "period_days": 30,
       "product_margin_pct": 28.0
     }
   ],
   "keywords": [
-    {"keyword": "bamboo drawer organizer", "match_type": "exact", "clicks": 92, "impressions": 6100, "spend": 82.80, "sales": 594.00, "orders": 17, "current_bid": 0.95},
-    {"keyword": "kitchen drawer divider", "match_type": "phrase", "clicks": 61, "impressions": 5400, "spend": 61.00, "sales": 210.00, "orders": 6, "current_bid": 1.05},
-    {"keyword": "drawer organizer plastic", "match_type": "broad", "clicks": 44, "impressions": 9800, "spend": 39.60, "sales": 0.0, "orders": 0, "current_bid": 0.90},
-    {"keyword": "silverware tray", "match_type": "broad", "clicks": 38, "impressions": 7200, "spend": 34.20, "sales": 0.0, "orders": 0, "current_bid": 0.88},
-    {"keyword": "expandable utensil organizer", "match_type": "phrase", "clicks": 27, "impressions": 2100, "spend": 23.00, "sales": 279.00, "orders": 8, "current_bid": 0.85}
+    {
+      "keyword": "bamboo drawer organizer",
+      "match_type": "exact",
+      "clicks": 92,
+      "impressions": 6100,
+      "spend": 82.8,
+      "sales": 594.0,
+      "orders": 17,
+      "current_bid": 0.95
+    },
+    {
+      "keyword": "kitchen drawer divider",
+      "match_type": "phrase",
+      "clicks": 61,
+      "impressions": 5400,
+      "spend": 61.0,
+      "sales": 210.0,
+      "orders": 6,
+      "current_bid": 1.05
+    },
+    {
+      "keyword": "drawer organizer plastic",
+      "match_type": "broad",
+      "clicks": 44,
+      "impressions": 9800,
+      "spend": 39.6,
+      "sales": 0.0,
+      "orders": 0,
+      "current_bid": 0.9
+    },
+    {
+      "keyword": "silverware tray",
+      "match_type": "broad",
+      "clicks": 38,
+      "impressions": 7200,
+      "spend": 34.2,
+      "sales": 0.0,
+      "orders": 0,
+      "current_bid": 0.88
+    },
+    {
+      "keyword": "expandable utensil organizer",
+      "match_type": "phrase",
+      "clicks": 27,
+      "impressions": 2100,
+      "spend": 23.0,
+      "sales": 279.0,
+      "orders": 8,
+      "current_bid": 0.85
+    }
   ],
   "competitors": {
     "SEED-BAMBOO-ORG-01": [
-      {"seller": "RivalHomeGoods", "price": 32.99, "rating": 4.4, "review_count": 1400, "is_prime": true, "in_stock": true, "is_buybox": false},
-      {"seller": "KitchenDirect", "price": 35.50, "rating": 4.1, "review_count": 620, "is_prime": true, "in_stock": true},
-      {"seller": "BudgetBambooCo", "price": 21.99, "rating": 3.6, "review_count": 90, "is_prime": false, "in_stock": true},
-      {"seller": "PremiumOrganize", "price": 41.00, "rating": 4.6, "review_count": 2100, "is_prime": true, "in_stock": true}
+      {
+        "seller": "RivalHomeGoods",
+        "price": 32.99,
+        "rating": 4.4,
+        "review_count": 1400,
+        "is_prime": true,
+        "in_stock": true,
+        "is_buybox": false
+      },
+      {
+        "seller": "KitchenDirect",
+        "price": 35.5,
+        "rating": 4.1,
+        "review_count": 620,
+        "is_prime": true,
+        "in_stock": true
+      },
+      {
+        "seller": "BudgetBambooCo",
+        "price": 21.99,
+        "rating": 3.6,
+        "review_count": 90,
+        "is_prime": false,
+        "in_stock": true
+      },
+      {
+        "seller": "PremiumOrganize",
+        "price": 41.0,
+        "rating": 4.6,
+        "review_count": 2100,
+        "is_prime": true,
+        "in_stock": true
+      }
     ],
     "SEED-PETBRUSH-03": [
-      {"seller": "PetSupplyPro", "price": 26.99, "rating": 4.3, "review_count": 800, "is_prime": true, "in_stock": true},
-      {"seller": "GroomEasy", "price": 25.49, "rating": 4.0, "review_count": 410, "is_prime": true, "in_stock": true}
+      {
+        "seller": "PetSupplyPro",
+        "price": 26.99,
+        "rating": 4.3,
+        "review_count": 800,
+        "is_prime": true,
+        "in_stock": true
+      },
+      {
+        "seller": "GroomEasy",
+        "price": 25.49,
+        "rating": 4.0,
+        "review_count": 410,
+        "is_prime": true,
+        "in_stock": true
+      }
     ]
   },
   "reviews": {
     "SEED-BAMBOO-ORG-01": [
-      {"review_id": "R1", "rating": 5, "title": "Perfect fit", "body": "Fits my drawer exactly and looks great.", "created_at": "2026-07-20"},
-      {"review_id": "R2", "rating": 2, "title": "Too small", "body": "Runs small, does not fit my standard drawer at all. Wrong size for the price.", "created_at": "2026-07-21"},
-      {"review_id": "R3", "rating": 2, "title": "Sizing is off", "body": "Too small even fully expanded. Doesn't fit.", "created_at": "2026-07-22"},
-      {"review_id": "R4", "rating": 4, "title": "Good", "body": "Solid bamboo, happy with it.", "created_at": "2026-07-23"},
-      {"review_id": "R5", "rating": 1, "title": "Cracked", "body": "The divider snapped within a week. Cheaply made and flimsy.", "created_at": "2026-07-24"},
-      {"review_id": "R6", "rating": 3, "title": "Runs small", "body": "Wish the listing said the real dimensions, it runs small.", "created_at": "2026-07-25"},
-      {"review_id": "R7", "rating": 5, "title": "Love it", "body": "Exactly what I needed for utensils.", "created_at": "2026-07-26"}
+      {
+        "review_id": "R1",
+        "rating": 5,
+        "title": "Perfect fit",
+        "body": "Fits my drawer exactly and looks great.",
+        "created_at": "2026-07-20"
+      },
+      {
+        "review_id": "R2",
+        "rating": 2,
+        "title": "Too small",
+        "body": "Runs small, does not fit my standard drawer at all. Wrong size for the price.",
+        "created_at": "2026-07-21"
+      },
+      {
+        "review_id": "R3",
+        "rating": 2,
+        "title": "Sizing is off",
+        "body": "Too small even fully expanded. Doesn't fit.",
+        "created_at": "2026-07-22"
+      },
+      {
+        "review_id": "R4",
+        "rating": 4,
+        "title": "Good",
+        "body": "Solid bamboo, happy with it.",
+        "created_at": "2026-07-23"
+      },
+      {
+        "review_id": "R5",
+        "rating": 1,
+        "title": "Cracked",
+        "body": "The divider snapped within a week. Cheaply made and flimsy.",
+        "created_at": "2026-07-24"
+      },
+      {
+        "review_id": "R6",
+        "rating": 3,
+        "title": "Runs small",
+        "body": "Wish the listing said the real dimensions, it runs small.",
+        "created_at": "2026-07-25"
+      },
+      {
+        "review_id": "R7",
+        "rating": 5,
+        "title": "Love it",
+        "body": "Exactly what I needed for utensils.",
+        "created_at": "2026-07-26"
+      }
     ],
     "SEED-CABLEORG-06": [
-      {"review_id": "R10", "rating": 1, "title": "Dangerous", "body": "The magnet got hot and my cable caught fire. My child swallowed one of the small pieces too. Reported to CPSC.", "created_at": "2026-07-25"},
-      {"review_id": "R11", "rating": 3, "title": "Okay", "body": "Works but the adhesive is weak.", "created_at": "2026-07-26"},
-      {"review_id": "R12", "rating": 4, "title": "Fine", "body": "Does the job on my desk.", "created_at": "2026-07-27"}
+      {
+        "review_id": "R10",
+        "rating": 1,
+        "title": "Dangerous",
+        "body": "The magnet got hot and my cable caught fire. My child swallowed one of the small pieces too. Reported to CPSC.",
+        "created_at": "2026-07-25"
+      },
+      {
+        "review_id": "R11",
+        "rating": 3,
+        "title": "Okay",
+        "body": "Works but the adhesive is weak.",
+        "created_at": "2026-07-26"
+      },
+      {
+        "review_id": "R12",
+        "rating": 4,
+        "title": "Fine",
+        "body": "Does the job on my desk.",
+        "created_at": "2026-07-27"
+      }
     ]
   },
   "daily_metrics": [
-    {"sku": "SEED-BAMBOO-ORG-01", "marketplace": "amazon", "units": 12, "revenue": 419.88, "cogs": 123.60, "fees": 119.40, "ad_spend": 20.75, "refunds": 17.50, "net_profit": 138.63},
-    {"sku": "SEED-PETBRUSH-03", "marketplace": "shopify", "units": 7, "revenue": 174.93, "cogs": 37.10, "fees": 12.20, "ad_spend": 6.00, "refunds": 0.00, "net_profit": 119.63},
-    {"sku": "SEED-CABLEORG-06", "marketplace": "amazon", "units": 4, "revenue": 55.96, "cogs": 15.00, "fees": 27.10, "ad_spend": 9.60, "refunds": 0.00, "net_profit": 4.26},
-    {"sku": "SEED-MUGSET-07", "marketplace": "amazon", "units": 0, "revenue": 0.00, "cogs": 0.00, "fees": 8.60, "ad_spend": 0.28, "refunds": 0.00, "net_profit": -8.88}
+    {
+      "sku": "SEED-BAMBOO-ORG-01",
+      "marketplace": "amazon",
+      "units": 12,
+      "revenue": 419.88,
+      "cogs": 123.6,
+      "fees": 119.4,
+      "ad_spend": 20.75,
+      "refunds": 17.5,
+      "net_profit": 138.63
+    },
+    {
+      "sku": "SEED-PETBRUSH-03",
+      "marketplace": "shopify",
+      "units": 7,
+      "revenue": 174.93,
+      "cogs": 37.1,
+      "fees": 12.2,
+      "ad_spend": 6.0,
+      "refunds": 0.0,
+      "net_profit": 119.63
+    },
+    {
+      "sku": "SEED-CABLEORG-06",
+      "marketplace": "amazon",
+      "units": 4,
+      "revenue": 55.96,
+      "cogs": 15.0,
+      "fees": 27.1,
+      "ad_spend": 9.6,
+      "refunds": 0.0,
+      "net_profit": 4.26
+    },
+    {
+      "sku": "SEED-MUGSET-07",
+      "marketplace": "amazon",
+      "units": 0,
+      "revenue": 0.0,
+      "cogs": 0.0,
+      "fees": 8.6,
+      "ad_spend": 0.28,
+      "refunds": 0.0,
+      "net_profit": -8.88
+    }
   ],
   "prior_daily_metrics": [
-    {"sku": "SEED-BAMBOO-ORG-01", "marketplace": "amazon", "units": 10, "revenue": 349.90, "cogs": 103.00, "fees": 99.50, "ad_spend": 19.10, "refunds": 0.00, "net_profit": 128.30},
-    {"sku": "SEED-PETBRUSH-03", "marketplace": "shopify", "units": 9, "revenue": 224.91, "cogs": 47.70, "fees": 15.70, "ad_spend": 6.00, "refunds": 24.99, "net_profit": 130.52},
-    {"sku": "SEED-CABLEORG-06", "marketplace": "amazon", "units": 6, "revenue": 83.94, "cogs": 22.50, "fees": 40.60, "ad_spend": 9.60, "refunds": 0.00, "net_profit": 11.24},
-    {"sku": "SEED-MUGSET-07", "marketplace": "amazon", "units": 1, "revenue": 24.99, "cogs": 6.20, "fees": 12.10, "ad_spend": 0.28, "refunds": 0.00, "net_profit": 6.41}
+    {
+      "sku": "SEED-BAMBOO-ORG-01",
+      "marketplace": "amazon",
+      "units": 10,
+      "revenue": 349.9,
+      "cogs": 103.0,
+      "fees": 99.5,
+      "ad_spend": 19.1,
+      "refunds": 0.0,
+      "net_profit": 128.3
+    },
+    {
+      "sku": "SEED-PETBRUSH-03",
+      "marketplace": "shopify",
+      "units": 9,
+      "revenue": 224.91,
+      "cogs": 47.7,
+      "fees": 15.7,
+      "ad_spend": 6.0,
+      "refunds": 24.99,
+      "net_profit": 130.52
+    },
+    {
+      "sku": "SEED-CABLEORG-06",
+      "marketplace": "amazon",
+      "units": 6,
+      "revenue": 83.94,
+      "cogs": 22.5,
+      "fees": 40.6,
+      "ad_spend": 9.6,
+      "refunds": 0.0,
+      "net_profit": 11.24
+    },
+    {
+      "sku": "SEED-MUGSET-07",
+      "marketplace": "amazon",
+      "units": 1,
+      "revenue": 24.99,
+      "cogs": 6.2,
+      "fees": 12.1,
+      "ad_spend": 0.28,
+      "refunds": 0.0,
+      "net_profit": 6.41
+    }
   ],
   "supplier_quotes": {
     "SEED-BAMBOO-ORG-01": [
-      {"supplier_id": "SUP-A1", "name": "Fuzhou Bamboo Works", "country": "CN", "rating": 4.9, "unit_cost": 8.20, "moq": 200, "shipping_cost_per_unit": 2.10, "shipping_days": 11, "quality_score": 88, "communication_score": 92, "inventory_stability": 85, "defect_rate_pct": 1.2, "on_time_rate_pct": 96},
-      {"supplier_id": "SUP-A2", "name": "Anji Woodcraft Export", "country": "CN", "rating": 4.85, "unit_cost": 7.60, "moq": 500, "shipping_cost_per_unit": 2.40, "shipping_days": 14, "quality_score": 79, "communication_score": 70, "inventory_stability": 72, "defect_rate_pct": 3.1, "on_time_rate_pct": 88},
-      {"supplier_id": "SUP-A3", "name": "Portland Bamboo Supply", "country": "US", "rating": 4.9, "unit_cost": 12.40, "moq": 100, "shipping_cost_per_unit": 0.90, "shipping_days": 3, "domestic_stock": true, "quality_score": 93, "communication_score": 96, "inventory_stability": 94, "defect_rate_pct": 0.6, "on_time_rate_pct": 99}
+      {
+        "supplier_id": "SUP-A1",
+        "name": "Fuzhou Bamboo Works",
+        "country": "CN",
+        "rating": 4.9,
+        "unit_cost": 8.2,
+        "moq": 200,
+        "shipping_cost_per_unit": 2.1,
+        "shipping_days": 11,
+        "quality_score": 88,
+        "communication_score": 92,
+        "inventory_stability": 85,
+        "defect_rate_pct": 1.2,
+        "on_time_rate_pct": 96
+      },
+      {
+        "supplier_id": "SUP-A2",
+        "name": "Anji Woodcraft Export",
+        "country": "CN",
+        "rating": 4.85,
+        "unit_cost": 7.6,
+        "moq": 500,
+        "shipping_cost_per_unit": 2.4,
+        "shipping_days": 14,
+        "quality_score": 79,
+        "communication_score": 70,
+        "inventory_stability": 72,
+        "defect_rate_pct": 3.1,
+        "on_time_rate_pct": 88
+      },
+      {
+        "supplier_id": "SUP-A3",
+        "name": "Portland Bamboo Supply",
+        "country": "US",
+        "rating": 4.9,
+        "unit_cost": 12.4,
+        "moq": 100,
+        "shipping_cost_per_unit": 0.9,
+        "shipping_days": 3,
+        "domestic_stock": true,
+        "quality_score": 93,
+        "communication_score": 96,
+        "inventory_stability": 94,
+        "defect_rate_pct": 0.6,
+        "on_time_rate_pct": 99
+      }
+    ]
+  },
+  "account_health": {
+    "_comment": "SEED VALUES \u2014 not real account metrics.",
+    "order_defect_rate_pct": 0.62,
+    "late_shipment_rate_pct": 3.4,
+    "pre_fulfilment_cancel_rate_pct": 0.4,
+    "invalid_tracking_rate_pct": 1.1,
+    "return_dissatisfaction_rate_pct": 7.5,
+    "account_health_rating": 240
+  },
+  "signals": {
+    "_comment": "SEED SIGNALS \u2014 illustrative only. Real signals require connectors.",
+    "SEED-PETBRUSH-03": [
+      {
+        "source": "amazon_sales_rank",
+        "direction": "POSITIVE",
+        "strength": 72,
+        "observed_at": "2026-07-26",
+        "detail": "Rank 8,400 in Pet Supplies"
+      },
+      {
+        "source": "google_trends",
+        "direction": "POSITIVE",
+        "strength": 65,
+        "observed_at": "2026-07-25",
+        "detail": "Rising 12-month search interest"
+      },
+      {
+        "source": "social_reddit",
+        "direction": "POSITIVE",
+        "strength": 58,
+        "observed_at": "2026-07-24",
+        "detail": "Recurring recommendation threads"
+      }
+    ],
+    "SEED-BAMBOO-ORG-01": [
+      {
+        "source": "amazon_sales_rank",
+        "direction": "POSITIVE",
+        "strength": 61,
+        "observed_at": "2026-07-26",
+        "detail": "Rank 4,210 in Home & Kitchen"
+      }
     ]
   }
 }

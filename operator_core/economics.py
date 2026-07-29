@@ -161,6 +161,82 @@ def break_even_price(
     )
 
 
+def after_tax_profit(policy: Policy, pre_tax_profit: float) -> float:
+    """Apply the planning tax rate.
+
+    The charter's KPI is after-tax profit, so tax belongs in the decision math
+    rather than in a year-end surprise. A 40% pre-tax ROI is roughly a 32% ROI
+    after a 21% rate, and that difference decides marginal products.
+
+    Losses are returned unchanged: this models a single product's contribution,
+    and assuming a loss is refunded at the tax rate would flatter a bad product.
+    """
+    if pre_tax_profit <= 0:
+        return money(pre_tax_profit)
+    rate = float(policy.raw["tax"]["income_tax_rate_pct"]) / 100.0
+    return money(pre_tax_profit * (1.0 - rate))
+
+
+def after_tax_margin_pct(policy: Policy, unit: UnitEconomics) -> float:
+    if unit.sale_price <= 0:
+        return 0.0
+    return round(after_tax_profit(policy, unit.net_profit) / unit.sale_price * 100, 2)
+
+
+def after_tax_roi_pct(policy: Policy, unit: UnitEconomics) -> float:
+    invested = unit.landed_cost + unit.duty
+    if invested <= 0:
+        return 0.0
+    return round(after_tax_profit(policy, unit.net_profit) / invested * 100, 2)
+
+
+def cash_flow_projection(
+    *,
+    policy: Policy,
+    unit: UnitEconomics,
+    supplier: Supplier,
+    order_units: int,
+    monthly_demand_units: int,
+    payment_terms_days: int = 0,
+    marketplace_payout_lag_days: int = 14,
+) -> dict[str, float | int]:
+    """Project the cash timeline for one purchase order.
+
+    Profit and cash are not the same thing and the gap is where sellers die: you
+    pay the supplier now, pay freight now, and Amazon pays you a fortnight after
+    the sale. A profitable product on a 120-day cash cycle can still bankrupt a
+    business that reorders on schedule.
+    """
+    cash_out = money(order_units * (unit.landed_cost + unit.duty))
+
+    months_to_sell = (order_units / monthly_demand_units) if monthly_demand_units > 0 else 0.0
+    sell_through_days = int(months_to_sell * 30)
+
+    # First cash back: production/transit, then the first sale, then payout lag.
+    days_to_first_cash = supplier.shipping_days + marketplace_payout_lag_days
+    days_to_full_recovery = (
+        supplier.shipping_days + sell_through_days + marketplace_payout_lag_days
+        - payment_terms_days
+    )
+
+    revenue = money(order_units * unit.sale_price)
+    pre_tax = money(order_units * unit.net_profit)
+    post_tax = after_tax_profit(policy, pre_tax)
+
+    return {
+        "cash_out_today": cash_out,
+        "units": order_units,
+        "gross_revenue": revenue,
+        "pre_tax_profit": pre_tax,
+        "after_tax_profit": post_tax,
+        "days_to_first_cash": max(0, days_to_first_cash),
+        "days_to_full_recovery": max(0, days_to_full_recovery),
+        "sell_through_days": sell_through_days,
+        "peak_cash_exposure": cash_out,
+        "after_tax_roi_pct": round(post_tax / cash_out * 100, 2) if cash_out else 0.0,
+    }
+
+
 def cash_cycle_days(supplier: Supplier, *, payment_terms_days: int = 0,
                     sell_through_days: int = 45) -> int:
     """How long a dollar is trapped before it comes back.

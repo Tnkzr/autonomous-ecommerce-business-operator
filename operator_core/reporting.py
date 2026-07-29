@@ -37,6 +37,16 @@ class ReportContext:
     price_recommendations: list[Any] = field(default_factory=list)
     spend_state: SpendState = field(default_factory=SpendState)
     connector_status: list[dict[str, Any]] = field(default_factory=list)
+    # Charter additions
+    account_health: Any = None
+    capital_state: Any = None
+    allocation_decisions: list[Any] = field(default_factory=list)
+    allocation_notes: list[str] = field(default_factory=list)
+    concentration: dict[str, Any] = field(default_factory=dict)
+    turns: dict[str, Any] = field(default_factory=dict)
+    supplier_alerts: list[Any] = field(default_factory=list)
+    signal_coverage_pct: float = 0.0
+    unavailable_signals: list[str] = field(default_factory=list)
 
 
 def _totals(rows: list[dict[str, Any]]) -> dict[str, float]:
@@ -107,13 +117,29 @@ def build_daily_report(policy: Policy, ctx: ReportContext, store: Store | None =
         p.append(_delta_line("Units sold", t["units"], prior.get("units", 0.0), currency=False))
         p.append("")
         if t["revenue"] > 0:
+            gross_profit = money(t["revenue"] - t["cogs"])
+            gross_margin = gross_profit / t["revenue"] * 100
             net_margin = t["net_profit"] / t["revenue"] * 100
             tacos = t["ad_spend"] / t["revenue"] * 100
+            tax_rate = float(policy.tax["income_tax_rate_pct"])
+            after_tax = money(t["net_profit"] * (1 - tax_rate / 100)) if t["net_profit"] > 0 \
+                else t["net_profit"]
+
+            p.append(f"- Gross profit: **${gross_profit:,.2f}** ({gross_margin:.1f}% gross margin)")
             p.append(f"- Net margin: **{net_margin:.1f}%**")
+            p.append(
+                f"- **After-tax profit: ${after_tax:,.2f}** at a {tax_rate:.0f}% planning "
+                "rate — this is the charter's KPI, not the pre-tax line above."
+            )
             p.append(
                 f"- TACOS (total ad spend / total revenue): **{tacos:.1f}%** — the number "
                 "that matters more than campaign ACOS, because it includes the sales ads "
                 "did not cause."
+            )
+            p.append(
+                f"- Operating cash movement: **${money(t['net_profit'] - t['refunds']):,.2f}** "
+                "before inventory purchases. Profit is not cash: goods are paid for "
+                "months before the marketplace settles the sale."
             )
         p.append("")
 
@@ -250,8 +276,124 @@ def build_daily_report(policy: Policy, ctx: ReportContext, store: Store | None =
             )
         p.append("")
 
+    # ---- account health --------------------------------------------------
+    p.append("## 8. Account Health")
+    if ctx.account_health is None:
+        p.append(
+            "_No account health metrics supplied._ These are not assumed healthy — "
+            "an unmeasured defect rate is exactly how a suspension arrives without "
+            "warning. Wire the Amazon performance metrics before scaling anything."
+        )
+    else:
+        ah = ctx.account_health
+        icon = {"CRITICAL": "🚨", "WARN": "⚠️", "INFO": "✓"}.get(ah.severity.value, "")
+        p.append(f"{icon} **{ah.severity.value}** · {ah.coverage_pct:.0f}% of metrics measured")
+        p.append("")
+        p.append("| Metric | Value | Limit | Utilisation |")
+        p.append("|---|---:|---:|---:|")
+        for m in ah.metrics:
+            value = f"{m.value:g}{m.unit}" if m.known else "unknown"
+            util = f"{m.utilisation_pct:.0f}%" if m.utilisation_pct is not None else "—"
+            p.append(f"| {m.label} | {value} | {m.limit:g}{m.unit} | {util} |")
+        p.append("")
+        for a in ah.actions:
+            p.append(f"- {a}")
+        p.append("")
+
+    # ---- capital ---------------------------------------------------------
+    p.append("## 9. Capital & Allocation")
+    if ctx.capital_state is None:
+        p.append("_No capital position supplied._")
+    else:
+        from .capital import reserves
+        res = reserves(policy)
+        cs = ctx.capital_state
+        p.append(f"- Total capital: **${cs.total_capital_usd:,.2f}** · "
+                 f"deployed **${cs.deployed_usd:,.2f}** · "
+                 f"cash **${cs.cash_available_usd:,.2f}**")
+        p.append(f"- Reserves held: ${res['total']:,.2f} "
+                 f"(ads ${res['advertising']:,.2f} · refunds ${res['refunds']:,.2f} · "
+                 f"contingency ${res['contingency']:,.2f})")
+        p.append(f"- Deployable now: **${res['deployable']:,.2f}**")
+        p.append("")
+
+        if ctx.turns:
+            tn = ctx.turns
+            p.append(f"**Inventory turns: {tn['portfolio_turns']:.2f}/yr** "
+                     f"(target {tn['target_turns']:.1f}, floor {tn['min_turns']:.1f}) — "
+                     "the multiplier on margin. The same 30% margin earns four times "
+                     "as much at 4 turns as at 1.")
+            if tn["sluggish"]:
+                p.append(f"- Below floor: {', '.join(tn['sluggish'])} "
+                         f"(${tn['capital_in_sluggish']:,.2f} tied up)")
+            if tn["dead"]:
+                p.append(f"- Not moving at all: {', '.join(tn['dead'])} "
+                         f"(${tn['capital_in_dead']:,.2f} dead capital)")
+            p.append("")
+
+        if ctx.concentration and ctx.concentration.get("breaches"):
+            p.append("**⚠️ Concentration limits breached**")
+            p.append("")
+            for b in ctx.concentration["breaches"]:
+                p.append(f"- {b['dimension']} `{b['value']}` holds {b['share_pct']:.0f}% "
+                         f"of deployed capital (limit {b['limit_pct']:.0f}%)")
+            p.append("")
+            p.append("A good margin does not offset concentration risk. One suspension, "
+                     "patent claim, or supplier failure at this weighting is fatal.")
+            p.append("")
+
+        if ctx.allocation_decisions:
+            p.append("**Capital allocation this cycle**")
+            p.append("")
+            p.append("| Rank | SKU | Requested | Funded | Headline ROI | Risk-adj | Annualised |")
+            p.append("|---:|---|---:|---:|---:|---:|---:|")
+            for d in ctx.allocation_decisions:
+                p.append(
+                    f"| {d.rank} | {d.request.sku} | ${d.request.amount_usd:,.0f} | "
+                    f"${d.approved_amount:,.0f} | {d.request.expected_roi_pct:.0f}% | "
+                    f"{d.risk_adjusted_roi_pct:.0f}% | {d.annualised_roi_pct:.0f}% |"
+                )
+            p.append("")
+            for d in ctx.allocation_decisions:
+                if d.reasons:
+                    p.append(f"- **{d.request.sku}**: {d.reasons[0]}")
+                    for r in d.reasons[1:]:
+                        p.append(f"  - {r}")
+            p.append("")
+        for note in ctx.allocation_notes:
+            p.append(f"- {note}")
+        p.append("")
+
+    # ---- supplier alerts -------------------------------------------------
+    if ctx.supplier_alerts:
+        p.append("## 10. Supplier Alerts")
+        p.append("")
+        for a in ctx.supplier_alerts:
+            p.append(f"- **[{a.severity}] {a.supplier_name}** — {a.detail}")
+            p.append(f"  - {a.recommendation}")
+        p.append("")
+
+    # ---- signal coverage -------------------------------------------------
+    p.append("## 11. Market Signal Coverage")
+    p.append(
+        f"**{ctx.signal_coverage_pct:.0f}% of the weighted signal set is observable.** "
+        "Confidence scores and opportunity rankings are only as good as this number."
+    )
+    p.append("")
+    if ctx.unavailable_signals:
+        p.append("Not connected:")
+        p.append("")
+        for line in ctx.unavailable_signals:
+            p.append(f"- {line}")
+        p.append("")
+        p.append(
+            "These are reported as unavailable, never estimated. A guessed trend "
+            "signal survives into a purchase order and becomes inventory."
+        )
+    p.append("")
+
     # ---- risk ------------------------------------------------------------
-    p.append("## 8. Risk & Capital Position")
+    p.append("## 12. Risk & Capital Position")
     for line in preflight_report(policy, ctx.spend_state):
         p.append(f"- {line}")
     p.append("")
@@ -266,7 +408,7 @@ def build_daily_report(policy: Policy, ctx: ReportContext, store: Store | None =
             p.append("")
 
     # ---- actions ---------------------------------------------------------
-    p.append("## 9. Recommended Actions")
+    p.append("## 13. Recommended Actions")
     actions = _collect_actions(policy, ctx)
     if not actions:
         p.append("_No actions required today._")
@@ -277,7 +419,7 @@ def build_daily_report(policy: Policy, ctx: ReportContext, store: Store | None =
 
     # ---- learning --------------------------------------------------------
     if store is not None:
-        p.append("## 10. Decision Journal")
+        p.append("## 14. Decision Journal")
         ls = learning_summary(store)
         p.append(
             f"- Decisions recorded: **{ls['total_decisions']}** "

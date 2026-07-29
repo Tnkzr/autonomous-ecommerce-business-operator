@@ -216,6 +216,88 @@ account_level_setting_change = true
 
 
 # -----------------------------------------------------------------------------
+# TAX
+# The charter's KPI is after-tax profit, so tax belongs in the decision math,
+# not in a year-end reconciliation. These are planning rates, not filing advice:
+# set them from what your accountant actually expects to pay.
+# -----------------------------------------------------------------------------
+[tax]
+income_tax_rate_pct = 21.0          # blended federal+state on business income
+# Sales tax is collected from the buyer and remitted, so it is not a cost. It
+# is modelled only because marketplace facilitator rules change who remits.
+marketplace_collects_sales_tax = true
+import_duty_default_pct = 0.0       # per-product duty overrides this
+# Deductible against income: COGS, fees, ads, storage. Not deductible: the
+# principal portion of anything financed. Kept simple deliberately.
+deductible_expense_share_pct = 100.0
+
+
+# -----------------------------------------------------------------------------
+# CAPITAL ALLOCATION
+# "Preserve capital" and "avoid concentration" from the charter, as numbers.
+# -----------------------------------------------------------------------------
+[capital]
+total_capital_usd = 25000.00
+# No single SKU may hold more than this share of deployed inventory capital.
+# One supplier failure or one listing suspension should never be fatal.
+max_single_sku_share_pct = 30.0
+max_single_supplier_share_pct = 45.0
+max_single_category_share_pct = 50.0
+# Reserves, held back from inventory purchases.
+reserve_advertising_pct = 15.0
+reserve_refunds_pct = 8.0
+reserve_contingency_pct = 12.0
+# Ranking uses risk-adjusted return: expected ROI discounted by the confidence
+# score and by how long capital stays tied up.
+min_risk_adjusted_roi_pct = 25.0
+target_inventory_turns_per_year = 4.0
+min_inventory_turns_per_year = 2.0  # below this, capital is sleeping
+
+
+# -----------------------------------------------------------------------------
+# MARKET SIGNALS
+# The charter asks for many sources. None are connected yet. Sources listed
+# here are *declared*, not assumed live — signals.py reports each as
+# unavailable until a connector exists. Weights apply once they do.
+# -----------------------------------------------------------------------------
+[signals]
+# A product needs this many independent positive signals before it can be
+# recommended. One signal is an anecdote, not evidence.
+min_positive_signals = 3
+min_confidence_score = 60.0         # 0-100
+# Signals older than this stop counting. Trend data decays fast.
+max_signal_age_days = 45
+
+[signals.weights]
+amazon_sales_rank = 0.30            # live via SP-API
+amazon_search_volume = 0.15         # requires Brand Analytics
+google_trends = 0.15
+social_tiktok = 0.10
+social_reddit = 0.08
+social_pinterest = 0.05
+social_youtube = 0.05
+news_regulatory = 0.07
+seasonality = 0.05
+
+
+# -----------------------------------------------------------------------------
+# ACCOUNT HEALTH
+# Account suspension is the single largest existential risk to the business.
+# These mirror Amazon's published performance targets.
+# -----------------------------------------------------------------------------
+[account_health]
+max_order_defect_rate_pct = 1.0
+max_late_shipment_rate_pct = 4.0
+max_pre_fulfilment_cancel_rate_pct = 2.5
+max_invalid_tracking_rate_pct = 5.0
+max_return_dissatisfaction_rate_pct = 10.0
+min_account_health_rating = 200     # Amazon AHR scale
+# Warn before the limit, not at it — by the time you hit the threshold the
+# damage is already in the trailing window.
+warn_at_pct_of_limit = 75.0
+
+
+# -----------------------------------------------------------------------------
 # REPORTING
 # -----------------------------------------------------------------------------
 [reporting]

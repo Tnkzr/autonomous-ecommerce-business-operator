@@ -6,6 +6,7 @@
     python -m operator_core.cli listing SEED-BAMBOO-ORG-01
     python -m operator_core.cli suppliers SEED-BAMBOO-ORG-01
     python -m operator_core.cli price SEED-BAMBOO-ORG-01
+    python -m operator_core.cli capital
     python -m operator_core.cli approvals
     python -m operator_core.cli approve <action_id> --by "Name"
     python -m operator_core.cli outcome <action_id> --met true --note "..."
@@ -441,6 +442,79 @@ def cmd_amazon_offers(args, policy, store) -> int:
     return 0
 
 
+def cmd_capital(args, policy, store) -> int:
+    """Capital position, concentration, turns, and signal coverage."""
+    from .capital import CapitalState, Position, concentration_report, portfolio_turns, reserves
+    from .signals import available_weight, unavailable_sources_report
+
+    ops, source = load_operations()
+    positions = [
+        Position(
+            sku=x["sku"], category=x.get("category", "uncategorised"),
+            supplier_id=x.get("supplier_id", "unknown"),
+            units_on_hand=int(x["on_hand_units"]),
+            units_inbound=int(x.get("inbound_units", 0)),
+            unit_cost=float(x.get("unit_cost", 0.0)),
+            annual_units_sold=float(x.get("daily_velocity", 0.0)) * 365,
+        )
+        for x in ops.get("inventory", [])
+    ]
+    state = CapitalState(
+        total_capital_usd=float(policy.capital["total_capital_usd"]),
+        cash_available_usd=float(ops.get("spend_state", {}).get("cash_available_usd", 0.0)),
+        positions=positions,
+    )
+    res = reserves(policy)
+
+    _hr("CAPITAL POSITION")
+    if source != "live":
+        print(f"  ! Positions are {source.upper()} data, not your real inventory.\n")
+    print(f"  Total capital:  ${state.total_capital_usd:,.2f}")
+    print(f"  Deployed:       ${state.deployed_usd:,.2f}")
+    print(f"  Cash on hand:   ${state.cash_available_usd:,.2f}")
+    print(f"  Reserves:       ${res['total']:,.2f}  "
+          f"(ads ${res['advertising']:,.2f} / refunds ${res['refunds']:,.2f} / "
+          f"contingency ${res['contingency']:,.2f})")
+    print(f"  Deployable:     ${res['deployable']:,.2f}")
+
+    turns = portfolio_turns(policy, state)
+    _hr("INVENTORY TURNS")
+    print(f"  Portfolio: {turns['portfolio_turns']:.2f}/yr  "
+          f"(target {turns['target_turns']:.1f}, floor {turns['min_turns']:.1f})")
+    for sku, t in sorted(turns["per_sku"].items(), key=lambda kv: kv[1]):
+        flag = "DEAD" if t <= 0 else ("SLOW" if t < turns["min_turns"] else "")
+        print(f"    {sku:<24}{t:>7.2f}/yr  {flag}")
+    if turns["capital_in_dead"]:
+        print(f"\n  ${turns['capital_in_dead']:,.2f} in stock that is not moving at all.")
+
+    conc = concentration_report(policy, state)
+    _hr("CONCENTRATION")
+    for dim in ("sku", "category", "supplier_id"):
+        shares = conc["shares"].get(dim, {})
+        top = sorted(shares.items(), key=lambda kv: -kv[1])[:3]
+        print(f"  {dim}:")
+        for key, pct in top:
+            print(f"    {key:<28}{pct:>6.1f}%")
+    if conc["breaches"]:
+        print("\n  BREACHES:")
+        for b in conc["breaches"]:
+            print(f"    {b['dimension']} '{b['value']}' at {b['share_pct']:.0f}% "
+                  f"(limit {b['limit_pct']:.0f}%)")
+        print("\n  Concentration is the risk that ends businesses. A good margin does")
+        print("  not offset it — one suspension or supplier failure at this weighting")
+        print("  is fatal, regardless of how profitable the SKU is.")
+    for u in conc.get("unmapped", []):
+        print(f"\n  ! {u['detail']}")
+
+    _hr("MARKET SIGNAL COVERAGE")
+    print(f"  {available_weight(policy):.0f}% of the weighted signal set is observable.\n")
+    for line in unavailable_sources_report(policy):
+        print(f"    - {line}")
+    print("\n  These are reported as unavailable, never estimated. A guessed trend")
+    print("  signal survives into a purchase order and becomes inventory.")
+    return 0
+
+
 def cmd_approvals(args, policy, store) -> int:
     pending = store.pending_approvals()
     _hr(f"PENDING APPROVALS ({len(pending)})")
@@ -545,6 +619,8 @@ def main(argv: list[str] | None = None) -> int:
     p_aof = sub.add_parser("amazon-offers", help="competitor offers for an ASIN")
     p_aof.add_argument("asin")
 
+    sub.add_parser("capital", help="capital position, concentration, turns, signals")
+
     sub.add_parser("approvals", help="list actions awaiting human approval")
 
     p_ap = sub.add_parser("approve", help="approve a pending action")
@@ -577,7 +653,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": cmd_status, "daily": cmd_daily, "screen": cmd_screen,
         "listing": cmd_listing, "suppliers": cmd_suppliers, "price": cmd_price,
         "approvals": cmd_approvals, "approve": cmd_approve, "outcome": cmd_outcome,
-        "journal": cmd_journal,
+        "journal": cmd_journal, "capital": cmd_capital,
         "amazon-verify": cmd_amazon_verify, "amazon-search": cmd_amazon_search,
         "amazon-fees": cmd_amazon_fees, "amazon-inventory": cmd_amazon_inventory,
         "amazon-orders": cmd_amazon_orders, "amazon-offers": cmd_amazon_offers,

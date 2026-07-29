@@ -65,6 +65,22 @@ class Policy:
         return self.raw["reporting"]
 
     @property
+    def tax(self) -> dict[str, Any]:
+        return self.raw["tax"]
+
+    @property
+    def capital(self) -> dict[str, Any]:
+        return self.raw["capital"]
+
+    @property
+    def signals(self) -> dict[str, Any]:
+        return self.raw["signals"]
+
+    @property
+    def account_health(self) -> dict[str, Any]:
+        return self.raw["account_health"]
+
+    @property
     def live_trading_enabled(self) -> bool:
         return bool(self.meta.get("live_trading_enabled", False))
 
@@ -97,6 +113,10 @@ REQUIRED_SECTIONS = (
     "advertising",
     "risk",
     "reporting",
+    "tax",
+    "capital",
+    "signals",
+    "account_health",
 )
 
 
@@ -168,3 +188,56 @@ def _validate(raw: dict[str, Any], path: Path) -> None:
     inv = raw["inventory"]
     if inv["critical_days_of_cover"] >= inv["target_days_of_cover"]:
         raise PolicyError("inventory.critical_days_of_cover must be below target_days_of_cover.")
+
+    tax = raw["tax"]
+    rate = float(tax["income_tax_rate_pct"])
+    if not 0.0 <= rate < 100.0:
+        raise PolicyError(
+            f"tax.income_tax_rate_pct={rate} is outside 0-100. A rate at or above "
+            "100% would make every profitable product look like a loss."
+        )
+
+    cap = raw["capital"]
+    reserve_total = (
+        float(cap["reserve_advertising_pct"])
+        + float(cap["reserve_refunds_pct"])
+        + float(cap["reserve_contingency_pct"])
+    )
+    if reserve_total >= 100.0:
+        raise PolicyError(
+            f"[capital] reserves total {reserve_total:.1f}% of capital, leaving "
+            "nothing to deploy. The operator could never buy inventory."
+        )
+    for key in ("max_single_sku_share_pct", "max_single_supplier_share_pct",
+                "max_single_category_share_pct"):
+        share = float(cap[key])
+        if not 0.0 < share <= 100.0:
+            raise PolicyError(f"capital.{key}={share} must be between 0 and 100.")
+    if float(cap["min_inventory_turns_per_year"]) > float(cap["target_inventory_turns_per_year"]):
+        raise PolicyError(
+            "capital.min_inventory_turns_per_year cannot exceed the target."
+        )
+
+    sig = raw["signals"]
+    weights = sig.get("weights", {})
+    if not weights:
+        raise PolicyError("[signals.weights] is empty; confidence scoring cannot run.")
+    total = sum(float(v) for v in weights.values())
+    if abs(total - 1.0) > 1e-6:
+        raise PolicyError(
+            f"[signals.weights] must sum to 1.0, got {total:.4f}. An unnormalised "
+            "weighting silently biases which sources decide an opportunity."
+        )
+    if int(sig["min_positive_signals"]) < 1:
+        raise PolicyError(
+            "signals.min_positive_signals must be at least 1 — the charter requires "
+            "corroboration before capital is committed."
+        )
+
+    health = raw["account_health"]
+    warn_at = float(health.get("warn_at_pct_of_limit", 75.0))
+    if not 0.0 < warn_at <= 100.0:
+        raise PolicyError(
+            f"account_health.warn_at_pct_of_limit={warn_at} must be in (0, 100]. "
+            "Warning only at 100% of a limit gives no time to react."
+        )

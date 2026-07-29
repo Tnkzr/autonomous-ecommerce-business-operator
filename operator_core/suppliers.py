@@ -235,3 +235,135 @@ def build_negotiation_brief(
         asks=asks,
         draft_message=draft,
     )
+
+
+# ---------------------------------------------------------------------------
+# Supplier deterioration
+# ---------------------------------------------------------------------------
+@dataclass
+class SupplierAlert:
+    supplier_id: str
+    supplier_name: str
+    severity: str            # INFO | WARN | CRITICAL
+    metric: str
+    detail: str
+    recommendation: str
+
+
+def detect_deterioration(
+    history: list[dict],
+    *,
+    min_observations: int = 3,
+    score_drop_pct: float = 10.0,
+    defect_rate_ceiling_pct: float = 5.0,
+    on_time_floor_pct: float = 85.0,
+) -> list[SupplierAlert]:
+    """Flag suppliers whose performance is trending down.
+
+    `history` is the rows from `store.supplier_trend`, oldest first.
+
+    Suppliers rarely fail suddenly — they drift. Defect rates creep, ship dates
+    slip a few days at a time, and each individual slip looks tolerable. By the
+    time it is obvious, the reorder is already placed. Comparing the recent
+    window against the earlier one catches the drift while there is still time
+    to qualify a second source.
+    """
+    if len(history) < min_observations:
+        return []
+
+    name = history[-1].get("supplier_name", "")
+    sid = history[-1].get("supplier_id", "")
+    alerts: list[SupplierAlert] = []
+
+    # Split into earlier and recent halves and compare the means.
+    midpoint = len(history) // 2
+    earlier, recent = history[:midpoint], history[midpoint:]
+
+    def mean(rows: list[dict], key: str) -> float | None:
+        vals = [float(r[key]) for r in rows if r.get(key) is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    old_score, new_score = mean(earlier, "score"), mean(recent, "score")
+    if old_score and new_score and old_score > 0:
+        drop = (old_score - new_score) / old_score * 100
+        if drop >= score_drop_pct:
+            alerts.append(SupplierAlert(
+                supplier_id=sid, supplier_name=name,
+                severity="WARN" if drop < score_drop_pct * 2 else "CRITICAL",
+                metric="scorecard",
+                detail=(f"Composite score fell {drop:.1f}% "
+                        f"({old_score:.1f} -> {new_score:.1f}) across "
+                        f"{len(history)} observations."),
+                recommendation=(
+                    "Qualify a backup source before the next PO. A declining "
+                    "supplier with no alternative is a single point of failure."
+                ),
+            ))
+
+    latest = history[-1]
+    defect = latest.get("defect_rate_pct")
+    if defect is not None and float(defect) > defect_rate_ceiling_pct:
+        alerts.append(SupplierAlert(
+            supplier_id=sid, supplier_name=name, severity="CRITICAL",
+            metric="defect_rate",
+            detail=f"Defect rate {float(defect):.1f}% is over the "
+                   f"{defect_rate_ceiling_pct:.1f}% ceiling.",
+            recommendation=(
+                "Hold the next order. Defects arrive as one-star reviews and "
+                "returns, which cost far more than the unit price difference."
+            ),
+        ))
+
+    on_time = latest.get("on_time_rate_pct")
+    if on_time is not None and float(on_time) < on_time_floor_pct:
+        alerts.append(SupplierAlert(
+            supplier_id=sid, supplier_name=name, severity="WARN",
+            metric="on_time_rate",
+            detail=f"On-time rate {float(on_time):.1f}% is under the "
+                   f"{on_time_floor_pct:.1f}% floor.",
+            recommendation=(
+                "Increase safety stock for SKUs from this supplier, or move "
+                "them. Late deliveries convert directly into stockouts."
+            ),
+        ))
+
+    old_defect, new_defect = mean(earlier, "defect_rate_pct"), mean(recent, "defect_rate_pct")
+    if old_defect is not None and new_defect is not None and new_defect > old_defect * 1.5 \
+            and new_defect > 1.0:
+        alerts.append(SupplierAlert(
+            supplier_id=sid, supplier_name=name, severity="WARN",
+            metric="defect_trend",
+            detail=(f"Defect rate rising: {old_defect:.1f}% -> {new_defect:.1f}%. "
+                    "Still under the ceiling, but the direction is wrong."),
+            recommendation=(
+                "Raise it with the supplier now, while it is a conversation "
+                "rather than a claim."
+            ),
+        ))
+
+    return alerts
+
+
+def backup_supplier_recommendation(
+    scored: list[SupplierScore], *, chosen_id: str,
+) -> tuple[SupplierScore | None, str]:
+    """Pick the best qualified alternative to the incumbent.
+
+    Single-sourcing is the most common avoidable failure in this business. The
+    backup does not need to be cheaper — it needs to exist, be qualified, and
+    be reachable before the incumbent fails.
+    """
+    alternatives = [s for s in scored
+                    if s.supplier.supplier_id != chosen_id and not s.disqualified]
+    if not alternatives:
+        return None, (
+            "No qualified backup supplier. Every SKU sourced here is single-sourced: "
+            "one factory problem stops the product entirely. Qualifying a second "
+            "source is worth doing before it is needed."
+        )
+    backup = alternatives[0]
+    return backup, (
+        f"Backup: {backup.name} (score {backup.total}). Place a small qualifying "
+        "order so the relationship and the sample are already in place if the "
+        "primary fails."
+    )

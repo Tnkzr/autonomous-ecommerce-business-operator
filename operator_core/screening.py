@@ -248,9 +248,52 @@ def opportunity_score(candidate: ProductCandidate, econ: UnitEconomics) -> float
     return round(profit_pool + margin + roi + headroom, 1)
 
 
+def _evidence_gates(policy: Policy, assessment) -> list[GateResult]:
+    """The charter's "require multiple positive signals" rule, as a gate.
+
+    Failing this is *not* the same as failing ROI. A product with thin evidence
+    might be excellent — we simply do not know yet, and the correct response to
+    not knowing is to look harder, not to buy. So these gates are non-blocking
+    at the compliance level but drive the decision to HOLD rather than REJECT.
+    """
+    cfg = policy.raw["signals"]
+    return [
+        GateResult(
+            name="signal_corroboration",
+            passed=assessment.meets_signal_minimum,
+            detail=(
+                f"{assessment.positive_signals} positive signal(s) vs minimum "
+                f"{int(cfg['min_positive_signals'])}."
+            ),
+            severity=Severity.WARN if not assessment.meets_signal_minimum else Severity.INFO,
+            blocking=False,
+        ),
+        GateResult(
+            name="confidence",
+            passed=assessment.meets_confidence_minimum,
+            detail=(
+                f"Confidence {assessment.score:.0f}/100 vs minimum "
+                f"{float(cfg['min_confidence_score']):.0f} "
+                f"({assessment.coverage_pct:.0f}% source coverage, effective "
+                f"{assessment.effective_score:.0f})."
+            ),
+            severity=Severity.WARN if not assessment.meets_confidence_minimum else Severity.INFO,
+            blocking=False,
+        ),
+    ]
+
+
 def screen_candidate(policy: Policy, candidate: ProductCandidate,
-                     *, sale_price: float | None = None) -> ScreeningResult:
-    """Run every gate. Returns a full audit trail, not just a verdict."""
+                     *, sale_price: float | None = None,
+                     confidence=None) -> ScreeningResult:
+    """Run every gate. Returns a full audit trail, not just a verdict.
+
+    `confidence` is an optional `signals.ConfidenceAssessment`. When supplied,
+    the charter's evidence requirements are enforced too: a candidate that
+    clears every hard gate but lacks corroborating signals is HELD, not
+    approved. Held is the honest verdict for "the economics work but we cannot
+    yet show that anyone wants it".
+    """
     econ = economics_for_candidate(policy, candidate, sale_price=sale_price)
 
     gates: list[GateResult] = []
@@ -258,6 +301,8 @@ def screen_candidate(policy: Policy, candidate: ProductCandidate,
     gates += _supplier_gates(policy, candidate)
     gates += _market_gates(policy, candidate)
     gates += _economic_gates(policy, econ)
+    if confidence is not None:
+        gates += _evidence_gates(policy, confidence)
 
     blocking = [g for g in gates if not g.passed and g.blocking]
     compliance_names = {
@@ -277,14 +322,29 @@ def screen_candidate(policy: Policy, candidate: ProductCandidate,
     elif blocking:
         decision = Decision.REJECT
         notes.append("Failed one or more economic/market gates.")
+    elif confidence is not None and not confidence.sufficient:
+        # Economics work; evidence does not yet support committing capital.
+        decision = Decision.HOLD
+        notes.append(
+            "Every hard gate passed, but the evidence bar was not met "
+            f"({confidence.summary()}). Held rather than approved — this is a "
+            "'we do not know yet', not a 'no'. Gather more signal before buying."
+        )
+        notes.extend(confidence.warnings)
     else:
         decision = Decision.NEEDS_HUMAN_APPROVAL
         notes.append(
             "All gates passed. Sourcing a new SKU commits capital, so it routes to "
             "human approval per risk.approval_thresholds.listing_publish."
         )
+        if confidence is not None:
+            notes.append(f"Evidence: {confidence.summary()}.")
 
     score = opportunity_score(candidate, econ) if decision != Decision.REJECT else 0.0
+    if confidence is not None and decision != Decision.REJECT:
+        # Rank on evidence-weighted score so poorly-understood opportunities do
+        # not outrank well-understood ones purely on optimistic arithmetic.
+        score = round(score * (confidence.effective_score / 100.0), 1)
 
     return ScreeningResult(
         sku=candidate.sku,
@@ -296,8 +356,15 @@ def screen_candidate(policy: Policy, candidate: ProductCandidate,
     )
 
 
-def screen_all(policy: Policy, candidates: list[ProductCandidate]) -> list[ScreeningResult]:
+def screen_all(policy: Policy, candidates: list[ProductCandidate],
+               *, confidence_by_sku: dict | None = None) -> list[ScreeningResult]:
     """Screen and rank. Approved candidates sort first, by opportunity score."""
-    results = [screen_candidate(policy, c) for c in candidates]
-    results.sort(key=lambda r: (r.decision == Decision.REJECT, -r.score))
+    confidence_by_sku = confidence_by_sku or {}
+    results = [
+        screen_candidate(policy, c, confidence=confidence_by_sku.get(c.sku))
+        for c in candidates
+    ]
+    order = {Decision.NEEDS_HUMAN_APPROVAL: 0, Decision.APPROVE: 0,
+             Decision.HOLD: 1, Decision.REJECT: 2}
+    results.sort(key=lambda r: (order.get(r.decision, 3), -r.score))
     return results
