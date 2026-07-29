@@ -54,6 +54,9 @@ Six standing objectives:
 | Win rate, outcome tracking | `store.py` |
 | Account protection, spend caps | `risk.py` |
 | Daily report | `reporting.py` |
+| TikTok daily loop | `tiktok_pipeline.py` |
+| TikTok store health | `account_health.assess_tiktok`, `[tiktok_health]` |
+| Manual signal capture | `signals.MANUALLY_OBSERVABLE`, `store.record_signal` |
 
 A charter clause that is not enforced somewhere in that table is an aspiration,
 not a rule. If you add one, add the code and the test with it.
@@ -75,6 +78,13 @@ not a rule. If you add one, add the code and the test with it.
   it; generated scripts leave specification lines unfilled rather than guessing.
 - **Score dimensions are `None` when unmeasured, never zero.** Zero means
   measured and bad. Every scorecard reports its own coverage.
+- **A strong scorecard never outranks weak evidence.** `tiktok_pipeline`
+  downgrades PURSUE when confidence is insufficient. The scorecard measures the
+  product; confidence measures how much is actually known about it, and the
+  second governs.
+- **Signals a human observed in-app are logged as `origin='manual'`.** Sources
+  with a real API may not be typed in — a recollection and a reading must stay
+  distinguishable.
 
 ### What this system cannot currently see
 
@@ -159,7 +169,7 @@ vector is computed by hand, not captured from the implementation.
 python3 -m unittest tests.test_operator tests.test_amazon \
     tests.test_charter tests.test_tiktok tests.test_growth
 ```
-310 tests, must stay green.
+336 tests, must stay green.
 
 A test that silently stops testing is worse than one that fails: assertions
 that mutate config or fixtures must verify the mutation actually applied.

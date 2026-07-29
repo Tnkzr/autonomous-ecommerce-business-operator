@@ -52,7 +52,7 @@ python3 -m operator_core.cli approve <id> --by "Your Name"
 python3 -m operator_core.cli outcome <id> --met true --note "sold through in 38d"
 python3 -m unittest tests.test_operator tests.test_amazon \
     tests.test_charter tests.test_tiktok \
-    tests.test_growth                          # 310 tests
+    tests.test_growth                          # 336 tests
 ```
 
 ### Amazon commands (require live credentials)
@@ -69,6 +69,9 @@ python3 -m operator_core.cli amazon-offers B08XXXXXXX
 ### TikTok Shop commands (require live credentials)
 
 ```bash
+python3 -m operator_core.cli tiktok-daily                  # THE MAIN LOOP
+python3 -m operator_core.cli signals                      # coverage + observations
+python3 -m operator_core.cli signal <sku> <source> --strength N
 python3 -m operator_core.cli tiktok-verify                 # prove auth works
 python3 -m operator_core.cli tiktok-products               # inventory
 python3 -m operator_core.cli tiktok-orders --since 2026-07-01
@@ -101,6 +104,7 @@ python3 -m operator_core.cli tiktok-report                 # daily optimisation
 | `reporting.py` | The daily report, including the provenance banner. |
 | `pipeline.py` | The daily run that wires it all together. |
 | `tiktok.py` | TikTok profit, trend shapes, daily optimisation. |
+| `tiktok_pipeline.py` | **The main loop.** Health → signals → profit → scoring → capital. |
 | `scoring.py` | Twelve-dimension product scorecard with coverage. |
 | `content.py` | Hooks, scripts, shot lists, creators, content calendar. |
 | `weekly.py` | Weekly business review and self-derived engineering backlog. |

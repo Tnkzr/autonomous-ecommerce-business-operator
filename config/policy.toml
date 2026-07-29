@@ -327,6 +327,27 @@ seasonality = 0.05
 
 
 # -----------------------------------------------------------------------------
+# TIKTOK SHOP STORE HEALTH
+# TikTok's seller metrics have different names and tighter thresholds than
+# Amazon's, and violation points are the mechanism that actually suspends a
+# shop. Published targets as of the current Seller Center policy.
+# -----------------------------------------------------------------------------
+[tiktok_health]
+max_seller_violation_points = 12       # 12+ triggers suspension review
+warn_violation_points = 6
+max_late_dispatch_rate_pct = 4.0       # orders not dispatched inside the SLA
+max_cancellation_rate_pct = 2.5        # seller-initiated cancellations
+max_return_refund_rate_pct = 5.0
+max_negative_review_rate_pct = 5.0
+min_shop_rating = 4.4                  # below 4.4 suppresses traffic
+min_fulfilment_rate_pct = 95.0
+max_avg_dispatch_hours = 48.0
+# TikTok suppresses a shop's reach before it suspends it, so acting at the
+# limit is already too late — the traffic loss precedes the enforcement.
+warn_at_pct_of_limit = 70.0
+
+
+# -----------------------------------------------------------------------------
 # ACCOUNT HEALTH
 # Account suspension is the single largest existential risk to the business.
 # These mirror Amazon's published performance targets.

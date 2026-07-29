@@ -342,6 +342,122 @@ def signal_from_sales_rank(rank: int, *, category_size: int = 1_000_000,
     )
 
 
+def signal_from_tiktok_velocity(
+    *,
+    recent_daily_units: float,
+    prior_daily_units: float,
+    trend_shape: str,
+    conversion_rate_pct: float = 0.0,
+    observed_at: str | None = None,
+) -> Signal:
+    """Turn our own TikTok product performance into a demand signal.
+
+    This is the one TikTok source that is genuinely live, because it describes
+    our own shop rather than the market. It is a real signal — units moving is
+    the least ambiguous evidence there is — but it is *our* demand, not
+    category demand, and it cannot tell us whether an unlisted product would
+    sell. The detail line says so.
+
+    Spike-decay is scored NEGATIVE even when recent volume is high: the curve
+    has rolled over, and treating the window average as demand is precisely
+    how a warehouse fills up.
+    """
+    observed_at = observed_at or date.today().isoformat()
+
+    if trend_shape in ("INSUFFICIENT_DATA", ""):
+        return Signal(
+            source="tiktok_product_velocity", direction=SignalDirection.NEUTRAL,
+            strength=0.0, observed_at=observed_at,
+            detail="Not enough daily history to establish a velocity trend.",
+        )
+
+    if trend_shape == "SPIKE_DECAY":
+        return Signal(
+            source="tiktok_product_velocity", direction=SignalDirection.NEGATIVE,
+            strength=70.0, observed_at=observed_at,
+            detail=(
+                f"Spike already decayed to {recent_daily_units:.1f} u/day. High "
+                "window volume, but the curve has rolled over — this is evidence "
+                "against reordering, not for it."
+            ),
+            raw={"recent": recent_daily_units, "prior": prior_daily_units,
+                 "shape": trend_shape},
+        )
+
+    if trend_shape == "DEAD":
+        return Signal(
+            source="tiktok_product_velocity", direction=SignalDirection.NEGATIVE,
+            strength=90.0, observed_at=observed_at,
+            detail="No units moving at all in the window.",
+            raw={"shape": trend_shape},
+        )
+
+    change = ((recent_daily_units - prior_daily_units) / prior_daily_units * 100
+              if prior_daily_units else 0.0)
+
+    if trend_shape == "GROWING":
+        strength = max(0.0, min(100.0, 55 + change / 4))
+        direction = SignalDirection.POSITIVE
+    elif trend_shape == "DECAYING":
+        strength = max(0.0, min(100.0, 40 + abs(change) / 4))
+        direction = SignalDirection.NEGATIVE
+    else:  # STEADY
+        strength = 45.0
+        direction = SignalDirection.POSITIVE if recent_daily_units > 0 \
+            else SignalDirection.NEUTRAL
+
+    return Signal(
+        source="tiktok_product_velocity", direction=direction,
+        strength=round(strength, 1), observed_at=observed_at,
+        detail=(
+            f"{trend_shape}: {prior_daily_units:.1f} -> {recent_daily_units:.1f} "
+            f"u/day ({change:+.0f}%), {conversion_rate_pct:.2f}% conversion. "
+            "This is our own shop's demand, not category demand."
+        ),
+        raw={"recent": recent_daily_units, "prior": prior_daily_units,
+             "shape": trend_shape, "conversion_pct": conversion_rate_pct},
+    )
+
+
+# Sources a human can legitimately observe in-app and log by hand. These have
+# no API, and manual entry is the only route that does not breach TikTok's ToS.
+MANUALLY_OBSERVABLE = frozenset({
+    "tiktok_hashtag_momentum",
+    "tiktok_sound_trend",
+    "tiktok_creator_adoption",
+    "google_trends",
+    "social_reddit",
+    "social_pinterest",
+    "social_youtube",
+    "news_regulatory",
+})
+
+
+def validate_manual_signal(policy: Policy, source: str, strength: float) -> None:
+    """Reject manual entries that would corrupt the confidence model.
+
+    A human logging what they saw in the app is legitimate evidence. A human
+    logging a source that has a real API, or inventing a strength for one they
+    did not check, is not — and the whole value of the confidence score is that
+    it distinguishes the two.
+    """
+    weights = policy.raw["signals"]["weights"]
+    if source not in weights:
+        raise ValueError(
+            f"Unknown signal source {source!r}. Known: {', '.join(sorted(weights))}."
+        )
+    if source not in MANUALLY_OBSERVABLE:
+        connector = SOURCE_CONNECTORS.get(source)
+        raise ValueError(
+            f"{source!r} is served by {connector or 'a connector'} and must not be "
+            "entered by hand. Manual entry for an automatable source means the "
+            "number is a recollection rather than a reading, and nothing "
+            "downstream can tell the difference."
+        )
+    if not 0.0 <= strength <= 100.0:
+        raise ValueError(f"Strength must be 0-100, got {strength}.")
+
+
 def unavailable_sources_report(policy: Policy) -> list[str]:
     """Human-readable list of what is missing and how to get it."""
     lines: list[str] = []

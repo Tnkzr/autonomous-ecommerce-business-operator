@@ -729,3 +729,232 @@ class TestOptimisationReport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestVelocitySignal(unittest.TestCase):
+    def test_growth_is_positive(self):
+        from operator_core.signals import signal_from_tiktok_velocity
+        s = signal_from_tiktok_velocity(
+            recent_daily_units=13.4, prior_daily_units=4.9, trend_shape="GROWING")
+        self.assertEqual(s.direction.value, "POSITIVE")
+        self.assertGreater(s.strength, 50)
+
+    def test_spike_decay_is_negative_despite_volume(self):
+        # The whole point: high window volume, curve already rolled over. This
+        # is evidence against reordering, not for it.
+        from operator_core.signals import signal_from_tiktok_velocity
+        s = signal_from_tiktok_velocity(
+            recent_daily_units=6.1, prior_daily_units=47.0,
+            trend_shape="SPIKE_DECAY")
+        self.assertEqual(s.direction.value, "NEGATIVE")
+        self.assertIn("rolled over", s.detail)
+
+    def test_insufficient_history_is_neutral_not_negative(self):
+        from operator_core.signals import signal_from_tiktok_velocity
+        s = signal_from_tiktok_velocity(
+            recent_daily_units=0, prior_daily_units=0,
+            trend_shape="INSUFFICIENT_DATA")
+        self.assertEqual(s.direction.value, "NEUTRAL")
+        self.assertEqual(s.strength, 0.0)
+
+    def test_detail_says_it_is_our_demand_not_the_market(self):
+        from operator_core.signals import signal_from_tiktok_velocity
+        s = signal_from_tiktok_velocity(
+            recent_daily_units=10, prior_daily_units=10, trend_shape="STEADY")
+        self.assertIn("our own shop", s.detail)
+
+
+class TestManualSignalGuard(unittest.TestCase):
+    def test_automatable_source_is_refused(self):
+        # A typed-in number for a source with an API is a recollection, and
+        # nothing downstream could tell it apart from a reading.
+        from operator_core.signals import validate_manual_signal
+        with self.assertRaises(ValueError) as ctx:
+            validate_manual_signal(POLICY, "tiktok_product_velocity", 80)
+        self.assertIn("recollection", str(ctx.exception))
+
+    def test_unobservable_source_is_allowed(self):
+        from operator_core.signals import validate_manual_signal
+        validate_manual_signal(POLICY, "tiktok_hashtag_momentum", 80)
+
+    def test_unknown_source_is_refused(self):
+        from operator_core.signals import validate_manual_signal
+        with self.assertRaises(ValueError):
+            validate_manual_signal(POLICY, "astrology", 80)
+
+    def test_out_of_range_strength_refused(self):
+        from operator_core.signals import validate_manual_signal
+        with self.assertRaises(ValueError):
+            validate_manual_signal(POLICY, "tiktok_sound_trend", 150)
+
+
+class TestTikTokStoreHealth(unittest.TestCase):
+    def test_violation_points_breach_is_critical(self):
+        from operator_core.account_health import assess_tiktok
+        a = assess_tiktok(POLICY, {"seller_violation_points": 14})
+        self.assertEqual(a.severity.value, "CRITICAL")
+        self.assertTrue(any("violation points" in m.label.lower() for m in a.breaches))
+
+    def test_shop_rating_is_higher_is_better(self):
+        from operator_core.account_health import assess_tiktok
+        low = assess_tiktok(POLICY, {"shop_rating": 4.0})
+        self.assertTrue(low.breaches)
+
+    def test_unmeasured_is_not_healthy(self):
+        from operator_core.account_health import assess_tiktok
+        a = assess_tiktok(POLICY, {})
+        self.assertEqual(a.coverage_pct, 0.0)
+        self.assertTrue(any("not healthy" in x for x in a.actions))
+
+    def test_warns_earlier_than_amazon(self):
+        # TikTok suppresses reach before it suspends, so acting at the limit
+        # is already too late.
+        tt = float(POLICY.tiktok_health["warn_at_pct_of_limit"])
+        amz = float(POLICY.account_health["warn_at_pct_of_limit"])
+        self.assertLess(tt, amz)
+
+    def test_points_note_explains_stacking(self):
+        from operator_core.account_health import assess_tiktok
+        a = assess_tiktok(POLICY, {"seller_violation_points": 8})
+        self.assertTrue(any("stack" in x for x in a.actions))
+
+    def test_breach_blocks_scaling(self):
+        from operator_core.account_health import assess_tiktok, blocks_scaling
+        a = assess_tiktok(POLICY, {"cancellation_rate_pct": 9.0})
+        self.assertTrue(blocks_scaling(a)[0])
+
+
+class TestRepeatPurchase(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from operator_core.store import Store
+        self.store = Store(Path(tempfile.mkdtemp()) / "r.db")
+
+    def _order(self, oid, buyer, status="COMPLETED", sku="S1"):
+        self.store.upsert_tiktok_order(
+            order_id=oid, buyer_key=buyer, status=status, sku=sku, units=1,
+            created_at="2026-07-01", buyer_total=20.0, data_source="seed")
+
+    def test_no_buyer_keys_returns_none_not_zero(self):
+        # "Cannot measure" and "measured at 0%" are different facts, and only
+        # one of them should stop LTV from being computed.
+        self._order("o1", "")
+        stats = self.store.repeat_purchase_stats()
+        self.assertIsNone(stats["repeat_rate_pct"])
+        self.assertIn("PII scope", stats["note"])
+
+    def test_repeat_rate_computed(self):
+        self._order("o1", "b1"); self._order("o2", "b1"); self._order("o3", "b2")
+        stats = self.store.repeat_purchase_stats()
+        self.assertEqual(stats["buyers_identified"], 2)
+        self.assertEqual(stats["repeat_rate_pct"], 50.0)
+
+    def test_unpaid_orders_excluded(self):
+        # An unpaid order is not a purchase; counting it inflates LTV, which
+        # then inflates what the business will pay to acquire a customer.
+        self._order("o1", "b1"); self._order("o2", "b1", status="UNPAID")
+        stats = self.store.repeat_purchase_stats()
+        self.assertEqual(stats["orders_per_buyer"], 1.0)
+
+    def test_small_sample_is_flagged(self):
+        self._order("o1", "b1")
+        self.assertIn("directional", self.store.repeat_purchase_stats()["note"])
+
+
+class TestTikTokDailyPipeline(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from operator_core.store import Store
+        self.store = Store(Path(tempfile.mkdtemp()) / "p.db")
+
+    def _run(self, **kw):
+        from operator_core.tiktok_pipeline import run_tiktok_daily
+        return run_tiktok_daily(POLICY, self.store, run_date="2026-07-29", **kw)
+
+    def test_run_produces_decisions(self):
+        r = self._run()
+        self.assertGreater(r.decisions_journaled, 0)
+        self.assertTrue(r.scorecards)
+
+    def test_run_is_idempotent(self):
+        first = self._run().decisions_journaled
+        before = len(self.store.recent_decisions(limit=1000))
+        self._run()
+        self.assertEqual(len(self.store.recent_decisions(limit=1000)), before)
+
+    def test_seed_data_is_labelled(self):
+        from operator_core.tiktok_pipeline import render_tiktok_daily
+        content = render_tiktok_daily(POLICY, self._run())
+        self.assertIn("NOT REAL BUSINESS NUMBERS", content)
+
+    def test_manual_signal_feeds_confidence(self):
+        self.store.record_signal(
+            sku="SEED-PETBRUSH-03", source="tiktok_hashtag_momentum",
+            direction="POSITIVE", strength=80, observed_at="2026-07-28",
+            detail="observed in app", origin="manual")
+        r = self._run()
+        conf = r.confidence["SEED-PETBRUSH-03"]
+        self.assertGreater(conf.coverage_pct, 0)
+        self.assertTrue(any(s.source == "tiktok_hashtag_momentum"
+                            for s in conf.signals))
+
+    def test_stale_manual_signal_is_dropped(self):
+        self.store.record_signal(
+            sku="SEED-PETBRUSH-03", source="tiktok_sound_trend",
+            direction="POSITIVE", strength=90, observed_at="2020-01-01",
+            origin="manual")
+        r = self._run()
+        conf = r.confidence["SEED-PETBRUSH-03"]
+        self.assertFalse(any(s.source == "tiktok_sound_trend" for s in conf.signals))
+
+    def test_health_breach_suppresses_scaling_actions(self):
+        # More volume through a failing process produces more defects.
+        import json
+        import tempfile
+        ops = json.loads((Path("data/seed/operations.json")).read_text())
+        ops["tiktok_health"]["seller_violation_points"] = 15
+        tmp = Path(tempfile.mkdtemp()) / "ops.json"
+        tmp.write_text(json.dumps(ops))
+        r = self._run(operations_path=tmp)
+        self.assertTrue(r.scaling_blocked)
+        self.assertFalse(any("Scale" in a.action for a in r.actions))
+
+    def test_ltv_reports_assumed_basis_without_buyer_data(self):
+        r = self._run()
+        self.assertIsNone(r.repeat_stats["repeat_rate_pct"])
+        for v in r.ltv.values():
+            self.assertEqual(v["basis"], "assumed")
+
+    def test_spike_decay_scores_below_growth(self):
+        r = self._run()
+        shapes = {t.title: t.shape for t in r.trends.values()}
+        self.assertIn("SPIKE_DECAY", shapes.values())
+        self.assertIn("GROWING", shapes.values())
+
+    def test_pursue_is_downgraded_on_thin_evidence(self):
+        # The scorecard measures the product; confidence measures how much we
+        # know about it. A PURSUE on one contradicted signal is a claim about
+        # arithmetic, not about demand.
+        r = self._run()
+        for card in r.scorecards:
+            conf = r.confidence.get(card.sku)
+            if conf is not None and not conf.sufficient:
+                self.assertNotEqual(card.verdict, "PURSUE")
+
+    def test_downgrade_is_explained_in_the_notes(self):
+        r = self._run()
+        downgraded = [c for c in r.scorecards
+                      if any("Downgraded" in n for n in c.notes)]
+        if downgraded:
+            self.assertTrue(any("downgraded" in n for n in r.notes))
+
+    def test_sufficient_evidence_keeps_the_verdict(self):
+        # Three corroborating manual observations clear the bar.
+        for src in ("tiktok_hashtag_momentum", "tiktok_sound_trend",
+                    "tiktok_creator_adoption"):
+            self.store.record_signal(
+                sku="SEED-PETBRUSH-03", source=src, direction="POSITIVE",
+                strength=85, observed_at="2026-07-28", origin="manual")
+        r = self._run()
+        conf = r.confidence["SEED-PETBRUSH-03"]
+        self.assertGreaterEqual(conf.positive_signals, 3)

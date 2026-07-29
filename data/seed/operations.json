@@ -988,5 +988,24 @@
       "ad_cost": 0.0,
       "on_hand_units": 310
     }
-  }
+  },
+  "tiktok_health": {
+    "_comment": "SEED VALUES \u2014 not real TikTok Shop metrics.",
+    "seller_violation_points": 4,
+    "late_dispatch_rate_pct": 3.2,
+    "cancellation_rate_pct": 0.9,
+    "return_refund_rate_pct": 4.1,
+    "negative_review_rate_pct": 3.8,
+    "shop_rating": 4.61,
+    "fulfilment_rate_pct": 97.2,
+    "avg_dispatch_hours": 26.0
+  },
+  "tiktok_product_sku_map": {
+    "_comment": "TikTok product_id -> our internal SKU.",
+    "170000000001": "SEED-BAMBOO-ORG-01",
+    "170000000002": "SEED-PETBRUSH-03",
+    "170000000003": "SEED-CABLEORG-06",
+    "170000000004": "SEED-MUGSET-07"
+  },
+  "tiktok_observed_take_rate_pct": 22.6
 }

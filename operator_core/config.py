@@ -85,6 +85,10 @@ class Policy:
         return self.raw["tiktok"]
 
     @property
+    def tiktok_health(self) -> dict[str, Any]:
+        return self.raw["tiktok_health"]
+
+    @property
     def live_trading_enabled(self) -> bool:
         return bool(self.meta.get("live_trading_enabled", False))
 
@@ -122,6 +126,7 @@ REQUIRED_SECTIONS = (
     "signals",
     "account_health",
     "tiktok",
+    "tiktok_health",
 )
 
 
@@ -252,6 +257,13 @@ def _validate(raw: dict[str, Any], path: Path) -> None:
             f"tiktok.min_trend_history_days={tt['min_trend_history_days']} is too "
             "short to tell growth from a decaying spike, and those call for "
             "opposite inventory decisions."
+        )
+
+    tth = raw["tiktok_health"]
+    if float(tth["warn_violation_points"]) >= float(tth["max_seller_violation_points"]):
+        raise PolicyError(
+            "tiktok_health.warn_violation_points must sit below the suspension "
+            "threshold, or the warning fires at the same moment as the suspension."
         )
 
     health = raw["account_health"]

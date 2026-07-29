@@ -25,6 +25,9 @@ Amazon SP-API (requires live credentials — see `status`):
 
 TikTok Shop (requires live credentials — see `status`):
 
+    python -m operator_core.cli tiktok-daily        # the main loop
+    python -m operator_core.cli signal --list-sources
+    python -m operator_core.cli signals
     python -m operator_core.cli tiktok-verify
     python -m operator_core.cli tiktok-products
     python -m operator_core.cli tiktok-orders --since 2026-07-01
@@ -932,6 +935,99 @@ def cmd_weekly(args, policy, store) -> int:
     return 0
 
 
+def cmd_tiktok_daily(args, policy, store) -> int:
+    """The TikTok Shop daily run — the operator's main loop."""
+    from .tiktok_pipeline import render_tiktok_daily, run_tiktok_daily, write_tiktok_daily
+
+    result = run_tiktok_daily(policy, store, run_date=args.date)
+    content = render_tiktok_daily(policy, result)
+    path = write_tiktok_daily(policy, content, result.run_date)
+    print(content)
+    print(f"\n[report written to {path}]")
+    return 0
+
+
+def cmd_signal(args, policy, store) -> int:
+    """Record a market signal observed by hand.
+
+    Hashtag momentum, trending sounds, and creator adoption have no API and
+    cannot be pulled without breaching TikTok's ToS. A human checking the app
+    and logging what they saw is the only legitimate route, and it is a real
+    input — but it is recorded as `manual` so nothing downstream mistakes a
+    recollection for a reading.
+    """
+    from .signals import MANUALLY_OBSERVABLE, validate_manual_signal
+
+    if args.list_sources:
+        _hr("MANUALLY OBSERVABLE SOURCES")
+        weights = policy.signals["weights"]
+        for src in sorted(MANUALLY_OBSERVABLE):
+            if src in weights:
+                print(f"  {src:<28} weight {float(weights[src]):.0%}")
+        print("\n  Everything else is served by a connector and must not be typed "
+              "in by hand —")
+        print("  a manual entry for an automatable source is a recollection, and "
+              "nothing")
+        print("  downstream can tell it apart from a reading.")
+        return 0
+
+    if not (args.sku and args.source):
+        print("Usage: signal <sku> <source> --strength N [--direction POSITIVE] "
+              "[--detail ...]", file=sys.stderr)
+        print("       signal --list-sources", file=sys.stderr)
+        return 1
+
+    try:
+        validate_manual_signal(policy, args.source, args.strength)
+    except ValueError as exc:
+        print(f"REFUSED\n  {exc}", file=sys.stderr)
+        return 1
+
+    from datetime import date as _date
+    observed = args.observed or _date.today().isoformat()
+    signal_id = store.record_signal(
+        sku=args.sku, source=args.source, direction=args.direction,
+        strength=args.strength, observed_at=observed,
+        detail=args.detail, observer=args.observer, origin="manual",
+    )
+    max_age = int(policy.signals["max_signal_age_days"])
+    print(f"Recorded signal #{signal_id}: {args.sku} / {args.source} "
+          f"{args.direction} @ {args.strength:.0f}")
+    print(f"  Observed {observed}. It stops counting after {max_age} days — "
+          "trend data decays,")
+    print("  and a stale spike is not current demand.")
+
+    existing = store.signals_for_sku(args.sku)
+    minimum = int(policy.signals["min_positive_signals"])
+    positives = sum(1 for r in existing if r["direction"] == "POSITIVE")
+    print(f"  {args.sku} now has {positives} positive signal(s); "
+          f"{minimum} are required before it can be recommended.")
+    return 0
+
+
+def cmd_signals(args, policy, store) -> int:
+    """Show recorded signals and current coverage."""
+    from .signals import available_weight, source_statuses
+
+    _hr("SIGNAL COVERAGE")
+    print(f"  {available_weight(policy):.0f}% of the weighted set is observable.\n")
+    for st in source_statuses(policy):
+        mark = "LIVE" if st.counts else "unavailable"
+        print(f"  {st.source:<28}{float(st.weight):>6.0%}  {mark}")
+
+    rows = store.all_signals()
+    _hr(f"RECORDED OBSERVATIONS ({len(rows)})")
+    if not rows:
+        print("  None yet. Log one with: signal <sku> <source> --strength N")
+        return 0
+    for r in rows[:args.limit]:
+        print(f"  {r['observed_at']}  {r['sku']:<22}{r['source']:<26}"
+              f"{r['direction']:<9}{r['strength']:>5.0f}  [{r['origin']}]")
+        if r["detail"]:
+            print(f"      {r['detail'][:88]}")
+    return 0
+
+
 def cmd_approvals(args, policy, store) -> int:
     pending = store.pending_approvals()
     _hr(f"PENDING APPROVALS ({len(pending)})")
@@ -1050,6 +1146,24 @@ def main(argv: list[str] | None = None) -> int:
     p_weekly = sub.add_parser("weekly", help="weekly business review")
     p_weekly.add_argument("--week-ending", dest="week_ending", default=None)
 
+    p_ttd = sub.add_parser("tiktok-daily",
+                           help="TikTok Shop daily run (the main loop)")
+    p_ttd.add_argument("--date", default=None)
+
+    p_sig = sub.add_parser("signal", help="record a hand-observed market signal")
+    p_sig.add_argument("sku", nargs="?")
+    p_sig.add_argument("source", nargs="?")
+    p_sig.add_argument("--strength", type=float, default=0.0)
+    p_sig.add_argument("--direction", default="POSITIVE",
+                       choices=["POSITIVE", "NEGATIVE", "NEUTRAL"])
+    p_sig.add_argument("--detail", default="")
+    p_sig.add_argument("--observed", default=None, help="ISO date observed")
+    p_sig.add_argument("--observer", default="")
+    p_sig.add_argument("--list-sources", action="store_true", dest="list_sources")
+
+    p_sigs = sub.add_parser("signals", help="signal coverage and recorded observations")
+    p_sigs.add_argument("--limit", type=int, default=25)
+
     sub.add_parser("tiktok-verify", help="verify the TikTok Shop connection")
     sub.add_parser("tiktok-products", help="live TikTok inventory")
 
@@ -1105,6 +1219,8 @@ def main(argv: list[str] | None = None) -> int:
         "amazon-verify": cmd_amazon_verify, "amazon-search": cmd_amazon_search,
         "amazon-fees": cmd_amazon_fees, "amazon-inventory": cmd_amazon_inventory,
         "amazon-orders": cmd_amazon_orders, "amazon-offers": cmd_amazon_offers,
+        "tiktok-daily": cmd_tiktok_daily, "signal": cmd_signal,
+        "signals": cmd_signals,
         "tiktok-verify": cmd_tiktok_verify, "tiktok-products": cmd_tiktok_products,
         "tiktok-orders": cmd_tiktok_orders,
         "tiktok-settlements": cmd_tiktok_settlements,

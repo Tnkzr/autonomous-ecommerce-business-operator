@@ -73,6 +73,36 @@ CREATE TABLE IF NOT EXISTS supplier_history (
     notes             TEXT DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS observed_signals (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    recorded_at  TEXT NOT NULL,
+    observed_at  TEXT NOT NULL,
+    sku          TEXT NOT NULL,
+    source       TEXT NOT NULL,
+    direction    TEXT NOT NULL,
+    strength     REAL NOT NULL,
+    detail       TEXT DEFAULT '',
+    observer     TEXT DEFAULT '',
+    origin       TEXT NOT NULL DEFAULT 'manual'
+);
+CREATE INDEX IF NOT EXISTS idx_signals_sku ON observed_signals(sku);
+CREATE INDEX IF NOT EXISTS idx_signals_observed ON observed_signals(observed_at);
+
+CREATE TABLE IF NOT EXISTS tiktok_orders (
+    order_id      TEXT PRIMARY KEY,
+    created_at    TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    buyer_key     TEXT DEFAULT '',
+    buyer_total   REAL NOT NULL DEFAULT 0,
+    currency      TEXT DEFAULT 'USD',
+    sku           TEXT DEFAULT '',
+    product_id    TEXT DEFAULT '',
+    units         INTEGER NOT NULL DEFAULT 0,
+    data_source   TEXT NOT NULL DEFAULT 'unknown'
+);
+CREATE INDEX IF NOT EXISTS idx_ttorders_buyer ON tiktok_orders(buyer_key);
+CREATE INDEX IF NOT EXISTS idx_ttorders_sku ON tiktok_orders(sku);
+
 CREATE TABLE IF NOT EXISTS price_history (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     changed_at   TEXT NOT NULL,
@@ -284,6 +314,138 @@ class Store:
                 (sku, marketplace),
             ).fetchone()
         return dict(row) if row else None
+
+    # -- observed signals -------------------------------------------------
+    def record_signal(self, *, sku: str, source: str, direction: str,
+                      strength: float, observed_at: str, detail: str = "",
+                      observer: str = "", origin: str = "manual") -> int:
+        """Persist an observed signal.
+
+        `origin` distinguishes a reading pulled from an API from one a human
+        typed in after looking at the app. Both are legitimate; conflating them
+        is not, because only one of them can be re-derived if it is ever
+        questioned.
+        """
+        with self._conn() as c:
+            cur = c.execute(
+                """INSERT INTO observed_signals
+                   (recorded_at, observed_at, sku, source, direction, strength,
+                    detail, observer, origin)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (now_iso(), observed_at, sku, source, direction, strength,
+                 detail, observer, origin),
+            )
+            return int(cur.lastrowid or 0)
+
+    def signals_for_sku(self, sku: str, *, since: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM observed_signals WHERE sku=?"
+        params: list[Any] = [sku]
+        if since:
+            query += " AND observed_at >= ?"
+            params.append(since)
+        query += " ORDER BY observed_at DESC"
+        with self._conn() as c:
+            rows = c.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def all_signals(self, *, since: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM observed_signals"
+        params: list[Any] = []
+        if since:
+            query += " WHERE observed_at >= ?"
+            params.append(since)
+        query += " ORDER BY observed_at DESC"
+        with self._conn() as c:
+            rows = c.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    # -- TikTok orders ----------------------------------------------------
+    def upsert_tiktok_order(self, **kw: Any) -> None:
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO tiktok_orders
+                   (order_id, created_at, status, buyer_key, buyer_total,
+                    currency, sku, product_id, units, data_source)
+                   VALUES (:order_id,:created_at,:status,:buyer_key,:buyer_total,
+                           :currency,:sku,:product_id,:units,:data_source)
+                   ON CONFLICT(order_id) DO UPDATE SET
+                     status=excluded.status, buyer_total=excluded.buyer_total,
+                     units=excluded.units, data_source=excluded.data_source""",
+                {
+                    "order_id": kw["order_id"],
+                    "created_at": kw.get("created_at", ""),
+                    "status": kw.get("status", ""),
+                    "buyer_key": kw.get("buyer_key", ""),
+                    "buyer_total": float(kw.get("buyer_total", 0.0)),
+                    "currency": kw.get("currency", "USD"),
+                    "sku": kw.get("sku", ""),
+                    "product_id": kw.get("product_id", ""),
+                    "units": int(kw.get("units", 0)),
+                    "data_source": kw.get("data_source", "unknown"),
+                },
+            )
+
+    def repeat_purchase_stats(self, *, sku: str | None = None,
+                              exclude_statuses: tuple[str, ...] = (
+                                  "UNPAID", "CANCELLED", "ON_HOLD")) -> dict[str, Any]:
+        """Derive repeat-purchase rate from stored orders.
+
+        Only counts orders that actually settled: an unpaid or cancelled order
+        is not a purchase, and including it inflates both the customer count and
+        the repeat rate — which then inflates LTV, which then justifies paying
+        more to acquire customers than they are worth.
+
+        Returns `buyers_identified=0` when no buyer key is available rather than
+        guessing a rate. TikTok only returns buyer identifiers under a PII
+        scope, so an operator running without it genuinely cannot measure this.
+        """
+        placeholders = ",".join("?" for _ in exclude_statuses)
+        query = (
+            f"SELECT buyer_key, COUNT(*) AS orders FROM tiktok_orders "
+            f"WHERE buyer_key != '' AND UPPER(status) NOT IN ({placeholders})"
+        )
+        params: list[Any] = list(exclude_statuses)
+        if sku:
+            query += " AND sku = ?"
+            params.append(sku)
+        query += " GROUP BY buyer_key"
+
+        with self._conn() as c:
+            rows = c.execute(query, params).fetchall()
+            total_row = c.execute(
+                "SELECT COUNT(*) AS n FROM tiktok_orders").fetchone()
+
+        buyers = [dict(r) for r in rows]
+        if not buyers:
+            return {
+                "buyers_identified": 0,
+                "repeat_rate_pct": None,
+                "orders_per_buyer": None,
+                "total_orders_seen": int(total_row["n"]) if total_row else 0,
+                "note": (
+                    "No buyer identifiers available, so repeat purchase cannot be "
+                    "measured. TikTok returns buyer identity only under a "
+                    "restricted PII scope. Until that is granted, LTV must assume "
+                    "a 0% repeat rate — an assumed rate would inflate every "
+                    "acquisition budget downstream."
+                ),
+            }
+
+        repeat_buyers = sum(1 for b in buyers if b["orders"] > 1)
+        total_orders = sum(b["orders"] for b in buyers)
+        return {
+            "buyers_identified": len(buyers),
+            "repeat_buyers": repeat_buyers,
+            "repeat_rate_pct": round(repeat_buyers / len(buyers) * 100, 1),
+            "orders_per_buyer": round(total_orders / len(buyers), 2),
+            "total_orders_seen": int(total_row["n"]) if total_row else 0,
+            "note": (
+                f"Derived from {len(buyers)} identified buyers. Small samples "
+                "swing hard — treat under 100 buyers as directional."
+                if len(buyers) < 100 else
+                f"Derived from {len(buyers)} identified buyers."
+            ),
+        }
 
     # -- supplier history -------------------------------------------------
     def record_supplier_score(self, *, supplier_id: str, supplier_name: str, score: float,
