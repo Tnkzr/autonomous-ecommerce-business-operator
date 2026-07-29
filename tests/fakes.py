@@ -409,3 +409,241 @@ TT_CREATE_OK = {
     "skus": [{"id": "SKU-9", "seller_sku": "NEW-1"}],
     "warnings": [{"message": "Image resolution below recommended 800x800"}],
 }
+
+
+# ---------------------------------------------------------------------------
+# Shopify Admin API fixtures.
+#
+# Shape note: Shopify returns HTTP 200 for both a rejected query (`errors`) and
+# a rejected mutation (`data.<field>.userErrors`). The helpers below produce all
+# three failure layers separately, because a test suite that only ever builds
+# the happy shape will pass against a client that checks none of them.
+# ---------------------------------------------------------------------------
+from connectors.shopify.transport import Response as ShopResponse
+
+
+class ShopifySender:
+    """Replays queued Shopify responses and records the GraphQL sent."""
+
+    def __init__(self, script: list) -> None:
+        self.script = list(script)
+        self.requests: list[dict[str, Any]] = []
+
+    def __call__(self, *, url: str, headers: dict[str, str], body: str,
+                 timeout: float) -> ShopResponse:
+        parsed = json.loads(body) if body else {}
+        self.requests.append({
+            "url": url, "headers": headers, "body": body,
+            "query": parsed.get("query", ""),
+            "variables": parsed.get("variables", {}),
+        })
+        if not self.script:
+            raise AssertionError(
+                f"ShopifySender exhausted; unexpected call #{len(self.requests)} "
+                f"with variables {parsed.get('variables')}")
+        entry = self.script.pop(0)
+        if callable(entry):
+            entry = entry(url=url, headers=headers, body=body)
+        status, payload, resp_headers = entry
+        return ShopResponse(status=status, headers=resp_headers or {}, body=payload)
+
+    @property
+    def last(self) -> dict[str, Any]:
+        return self.requests[-1]
+
+    def operations(self) -> list[str]:
+        """First line of each query — enough to assert on call ordering."""
+        return [r["query"].strip().splitlines()[0].strip() if r["query"] else ""
+                for r in self.requests]
+
+
+def _throttle(available: float = 900.0, maximum: float = 1000.0,
+              restore: float = 100.0, cost: float = 10.0) -> dict:
+    return {
+        "cost": {
+            "requestedQueryCost": cost,
+            "actualQueryCost": cost,
+            "throttleStatus": {
+                "maximumAvailable": maximum,
+                "currentlyAvailable": available,
+                "restoreRate": restore,
+            },
+        }
+    }
+
+
+def sh_ok(data: dict, *, extensions: dict | None = None,
+          headers: dict | None = None) -> tuple:
+    """A successful GraphQL response."""
+    return (200, {"data": data, "extensions": extensions or _throttle()},
+            headers or {})
+
+
+def sh_error(message: str, *, code: str = "", status: int = 200,
+             available: float = 900.0) -> tuple:
+    """Layer 2: query rejected. HTTP 200 unless told otherwise."""
+    error: dict[str, Any] = {"message": message}
+    if code:
+        error["extensions"] = {"code": code}
+    body: dict[str, Any] = {"errors": [error]}
+    if code == "THROTTLED":
+        body["extensions"] = _throttle(available=available)
+    return (status, body, {})
+
+
+def sh_user_error(field_name: str, errors: list[dict],
+                  payload: dict | None = None) -> tuple:
+    """Layer 3: mutation ran, business rejected it. HTTP 200, data populated."""
+    block = dict(payload or {})
+    block["userErrors"] = errors
+    return (200, {"data": {field_name: block}, "extensions": _throttle()}, {})
+
+
+def sh_http(status: int, message: str = "") -> tuple:
+    """Layer 1: HTTP-level failure."""
+    return (status, {"errors": message or f"HTTP {status}"}, {})
+
+
+SH_SHOP = {
+    "shop": {
+        "id": "gid://shopify/Shop/1",
+        "name": "Test Store",
+        "myshopifyDomain": "test-store.myshopify.com",
+        "primaryDomain": {"url": "https://test-store.com"},
+        "currencyCode": "USD",
+        "ianaTimezone": "America/New_York",
+        "plan": {"displayName": "Basic", "partnerDevelopment": False,
+                 "shopifyPlus": False},
+        "billingAddress": {"countryCodeV2": "US"},
+    }
+}
+
+SH_SCOPES = {
+    "currentAppInstallation": {
+        "accessScopes": [
+            {"handle": "read_products"}, {"handle": "write_products"},
+            {"handle": "read_inventory"}, {"handle": "write_inventory"},
+            {"handle": "read_orders"}, {"handle": "read_customers"},
+            {"handle": "read_price_rules"}, {"handle": "write_price_rules"},
+            {"handle": "read_publications"}, {"handle": "write_publications"},
+            {"handle": "read_locations"},
+        ]
+    }
+}
+
+SH_LOCATIONS = {
+    "locations": {
+        "nodes": [
+            {"id": "gid://shopify/Location/1", "name": "Main Warehouse",
+             "isActive": True, "fulfillsOnlineOrders": True,
+             "address": {"countryCode": "US", "provinceCode": "NY", "city": "NYC"}},
+        ],
+        "pageInfo": {"hasNextPage": False, "endCursor": None},
+    }
+}
+
+SH_PRODUCTS = {
+    "products": {
+        "nodes": [
+            {
+                "id": "gid://shopify/Product/1",
+                "title": "Bamboo Drawer Organizer",
+                "handle": "bamboo-drawer-organizer",
+                "status": "ACTIVE",
+                "vendor": "HomeNeat",
+                "productType": "Home Storage",
+                "tags": ["storage", "kitchen"],
+                "totalInventory": 240,
+                "onlineStoreUrl": "https://test-store.com/products/bamboo-drawer-organizer",
+                "createdAt": "2026-06-01T00:00:00Z",
+                "updatedAt": "2026-07-20T00:00:00Z",
+                "publishedAt": "2026-06-02T00:00:00Z",
+                "seo": {"title": "Bamboo Drawer Organizer", "description": "Expandable."},
+                "featuredMedia": {"id": "gid://shopify/MediaImage/1", "alt": "organizer"},
+                "variants": {"nodes": [
+                    {"id": "gid://shopify/ProductVariant/11", "title": "Default",
+                     "sku": "BAMBOO-ORG-01", "price": "34.99", "compareAtPrice": None,
+                     "barcode": None, "inventoryQuantity": 240,
+                     "inventoryItem": {"id": "gid://shopify/InventoryItem/21",
+                                       "tracked": True,
+                                       "unitCost": {"amount": "9.40", "currencyCode": "USD"},
+                                       "measurement": {"weight": {"value": 2.4, "unit": "POUNDS"}}}},
+                ]},
+            },
+            {
+                "id": "gid://shopify/Product/2",
+                "title": "Pet Slicker Brush",
+                "handle": "pet-slicker-brush",
+                "status": "DRAFT",
+                "vendor": "PetCo",
+                "productType": "Pet Supplies",
+                "tags": [],
+                "totalInventory": 12,
+                "onlineStoreUrl": None,
+                "createdAt": "2026-07-01T00:00:00Z",
+                "updatedAt": "2026-07-21T00:00:00Z",
+                "publishedAt": None,
+                "seo": {"title": None, "description": None},
+                "featuredMedia": None,
+                "variants": {"nodes": [
+                    {"id": "gid://shopify/ProductVariant/12", "title": "Default",
+                     "sku": "PETBRUSH-03", "price": "24.99", "compareAtPrice": None,
+                     "barcode": None, "inventoryQuantity": 12,
+                     "inventoryItem": {"id": "gid://shopify/InventoryItem/22",
+                                       "tracked": True, "unitCost": None,
+                                       "measurement": None}},
+                ]},
+            },
+        ],
+        "pageInfo": {"hasNextPage": False, "endCursor": None},
+    }
+}
+
+
+def sh_order(order_id: str, *, total: str = "34.99", journey: Any = None,
+             created_at: str = "2026-07-27T10:00:00Z", order_count: int = 1,
+             refunded: str = "", tax: str = "2.80", shipping: str = "0.00",
+             sku: str = "BAMBOO-ORG-01", quantity: int = 1) -> dict:
+    """One order node, with the journey shape Shopify actually returns."""
+    return {
+        "id": f"gid://shopify/Order/{order_id}",
+        "name": f"#{order_id}",
+        "createdAt": created_at,
+        "processedAt": created_at,
+        "displayFinancialStatus": "PAID",
+        "displayFulfillmentStatus": "FULFILLED",
+        "cancelledAt": None,
+        "currentTotalPriceSet": {"shopMoney": {"amount": total, "currencyCode": "USD"}},
+        "currentSubtotalPriceSet": {"shopMoney": {"amount": total}},
+        "totalDiscountsSet": {"shopMoney": {"amount": "0.00"}},
+        "totalShippingPriceSet": {"shopMoney": {"amount": shipping}},
+        "totalTaxSet": {"shopMoney": {"amount": tax}},
+        "refunds": ([{"totalRefundedSet": {"shopMoney": {"amount": refunded}}}]
+                    if refunded else []),
+        "customer": {"id": f"gid://shopify/Customer/{order_id}",
+                     "numberOfOrders": order_count},
+        "customerJourneySummary": journey,
+        "lineItems": {"nodes": [{
+            "id": "gid://shopify/LineItem/1", "quantity": quantity, "sku": sku,
+            "title": "Bamboo Drawer Organizer",
+            "originalTotalSet": {"shopMoney": {"amount": total}},
+            "discountedTotalSet": {"shopMoney": {"amount": total}},
+            "variant": {"id": "gid://shopify/ProductVariant/11",
+                        "inventoryItem": {"unitCost": {"amount": "9.40"}}},
+        }]},
+    }
+
+
+def sh_journey(source: str = "tiktok", *, source_type: str = "social",
+               referrer: str = "https://www.tiktok.com/", landing: str = "/",
+               utm: dict | None = None) -> dict:
+    """A customer journey summary. Pass journey=None for an unattributed order."""
+    return {
+        "momentsCount": {"count": 2},
+        "firstVisit": {"source": source, "sourceType": source_type,
+                       "referrerUrl": referrer, "landingPage": landing,
+                       "utmParameters": utm or {}},
+        "lastVisit": {"source": source, "sourceType": source_type,
+                      "referrerUrl": referrer, "landingPage": landing,
+                      "utmParameters": utm or {}},
+    }

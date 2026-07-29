@@ -85,6 +85,20 @@ class MarketplaceConnector(ABC):
 
     # -- credential handling ----------------------------------------------
     def missing_credentials(self) -> list[str]:
+        """Which credentials are absent, named as the operator would set them.
+
+        Delegates to the connector's `CredentialSource` when it has one. The
+        environment scan below is only the fallback for connectors that have
+        not been moved onto a source yet — reading `os.environ` here directly
+        would mean a connector configured from a file or a secrets manager
+        reports itself unconfigured while working perfectly.
+        """
+        source = getattr(self, "_credentials", None)
+        if source is not None:
+            status = source.status()
+            if status.available:
+                return []
+            return [source.spec.env_key(f) for f in status.missing_fields]
         return [k for k in self.required_env if not os.environ.get(k)]
 
     @property
