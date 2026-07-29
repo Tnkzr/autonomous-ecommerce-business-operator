@@ -124,10 +124,26 @@ Rate limits in `transport.RATE_LIMITS` are documented defaults. The live values
 come from `x-amzn-RateLimit-Limit` headers and the limiter adopts them at
 runtime — do not hardcode a seller's observed limit.
 
+TikTok Shop is in `connectors/tiktok/` with the same layering plus `signing.py`.
+Two things there will bite anyone who forgets them:
+
+- **TikTok returns HTTP 200 for failures.** The business `code` in the body is
+  the real status. Never check `resp.status` alone; `transport._interpret`
+  is the single place that decides success.
+- **The signed body must be byte-identical to the body sent.** Serialise once,
+  sign that string, send that string. Re-serialising a dict between the two is
+  an instant signature failure with an opaque error.
+
+Signature changes must keep `tests.test_tiktok.TestSigning` passing — its
+vector is computed by hand, not captured from the implementation.
+
 ## Testing
 
-`python3 -m unittest tests.test_operator tests.test_amazon tests.test_charter`
-— 184 tests, must stay green.
+```
+python3 -m unittest tests.test_operator tests.test_amazon \
+    tests.test_charter tests.test_tiktok
+```
+259 tests, must stay green.
 
 The highest-value tests assert *refusal*: that hazmat blocks a profitable
 product, that the repricer will not follow a rival below the floor, that caps

@@ -19,6 +19,15 @@ Amazon SP-API (requires live credentials — see `status`):
     python -m operator_core.cli amazon-inventory
     python -m operator_core.cli amazon-orders --since 2026-07-01
     python -m operator_core.cli amazon-offers B08EXAMPLE1
+
+TikTok Shop (requires live credentials — see `status`):
+
+    python -m operator_core.cli tiktok-verify
+    python -m operator_core.cli tiktok-products
+    python -m operator_core.cli tiktok-orders --since 2026-07-01
+    python -m operator_core.cli tiktok-settlements --days 30
+    python -m operator_core.cli tiktok-trends
+    python -m operator_core.cli tiktok-report
 """
 
 from __future__ import annotations
@@ -37,6 +46,7 @@ from connectors import (  # noqa: E402
     get_connector,
 )
 from connectors.amazon import SPAPIError  # noqa: E402
+from connectors.tiktok import TikTokAPIError  # noqa: E402
 
 from .config import PolicyError, load_policy  # noqa: E402
 from .economics import economics_for_candidate  # noqa: E402
@@ -515,6 +525,204 @@ def cmd_capital(args, policy, store) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# TikTok Shop commands.
+# ---------------------------------------------------------------------------
+def _tiktok(policy, *, writes: bool = False):
+    from connectors.tiktok import TikTokShopConnector
+    allow = writes and policy.live_trading_enabled
+    if writes and not policy.live_trading_enabled:
+        print("Note: meta.live_trading_enabled is false — writes stay blocked.\n")
+    return TikTokShopConnector(allow_writes=allow)
+
+
+def cmd_tiktok_verify(args, policy, store) -> int:
+    result = _tiktok(policy).verify_connection()
+    _hr("TIKTOK SHOP CONNECTION")
+    print(f"  Result:  {'CONNECTED' if result['ok'] else 'NOT CONNECTED'}")
+    print(f"  Detail:  {result.get('detail', '')}")
+    for key in ("region", "currency", "settlement_lag_days", "shop_name",
+                "shop_region", "sandbox", "code", "status_code"):
+        if result.get(key) not in (None, ""):
+            print(f"  {key.replace('_', ' ').title():<20}{result[key]}")
+    for shop in result.get("authorised_shops", []):
+        print(f"  Authorised shop:    {shop}")
+    for w in result.get("warnings", []):
+        print(f"  ! {w}")
+    if result["ok"]:
+        print(f"\n  Settlement lag is {result.get('settlement_lag_days', '?')} days —")
+        print("  that is the gap between a sale and the cash arriving, and it is")
+        print("  longer than Amazon's. Plan reorder cash around it.")
+    return 0 if result["ok"] else 1
+
+
+def cmd_tiktok_products(args, policy, store) -> int:
+    env = _tiktok(policy).fetch_inventory()
+    _hr("TIKTOK SHOP INVENTORY")
+    print(f"  source: {env.source} · {len(env.payload)} SKUs\n")
+    print(f"  {'SKU':<20}{'Product':<28}{'Stock':>7}{'Price':>10}  Status")
+    for r in env.payload:
+        print(f"  {str(r['sku'])[:19]:<20}{str(r['title'])[:27]:<28}"
+              f"{r['on_hand_units']:>7}{r['price']:>10.2f}  {r['status']}")
+    for w in env.warnings:
+        print(f"\n  ! {w}")
+    return 0
+
+
+def cmd_tiktok_orders(args, policy, store) -> int:
+    env = _tiktok(policy).fetch_orders(since=args.since)
+    _hr(f"TIKTOK ORDERS SINCE {args.since}")
+    print(f"  source: {env.source} · {len(env.payload)} orders\n")
+    total = sum(r["buyer_total"] for r in env.payload)
+    for r in env.payload[:args.limit]:
+        print(f"  {r['order_id']}  {r['created_at'][:10]}  "
+              f"{str(r['status']):<12}{r['buyer_total']:>9.2f} {r['currency']}")
+    print(f"\n  Buyer-paid total: {total:,.2f}")
+    for w in env.warnings:
+        print(f"  ! {w}")
+    return 0
+
+
+def cmd_tiktok_settlements(args, policy, store) -> int:
+    """Reconcile the real platform take rate against policy estimates."""
+    env = _tiktok(policy).fetch_settlements(days=args.days)
+    p = env.payload
+    _hr(f"TIKTOK SETTLEMENTS — LAST {args.days} DAYS")
+    print(f"  Statements:     {len(p['statements'])}")
+    print(f"  Revenue:        {p['total_revenue']:,.2f}")
+    print(f"  Platform fees:  {p['total_fees']:,.2f}")
+    print(f"  Take rate:      {p['take_rate_pct']:.2f}%")
+
+    fees = policy.fees_for("tiktok")
+    estimated = float(fees.get("referral_pct", 0)) + float(fees.get("payment_pct", 0))
+    estimated += float(fees.get("affiliate_commission_pct", 0))
+    print(f"\n  Policy [fees.tiktok] estimates {estimated:.2f}% "
+          f"(commission + payment + affiliate)")
+    drift = p["take_rate_pct"] - estimated
+    print(f"  Drift: {drift:+.2f} percentage points")
+    if abs(drift) > 3.0:
+        print("\n  These differ materially. Every TikTok margin, price floor, and")
+        print("  break-even in the system is computed from the policy estimate, so")
+        print("  update [fees.tiktok] before trusting any of them. Note in the commit")
+        print("  which date range the number came from.")
+    else:
+        print("\n  Policy estimates match the settled take rate for this window.")
+    return 0
+
+
+def cmd_tiktok_trends(args, policy, store) -> int:
+    from .tiktok import DailyPoint, analyse_trend
+
+    ops, source = load_operations()
+    history = ops.get("tiktok_daily_performance", {})
+    if not history:
+        print("No TikTok daily performance history available.", file=sys.stderr)
+        print("Trend analysis needs per-day history; a 30-day total cannot "
+              "distinguish growth from a decaying spike.", file=sys.stderr)
+        return 1
+
+    _hr("TIKTOK TREND ANALYSIS")
+    if source != "live":
+        print(f"  ! This is {source.upper()} data, not your real performance.\n")
+
+    min_days = int(policy.tiktok["min_trend_history_days"])
+    for pid, rows in history.items():
+        if pid.startswith("_"):
+            continue
+        points = [DailyPoint(day=r["day"], units=int(r["units"]),
+                             gmv=float(r.get("gmv", 0)),
+                             page_views=int(r.get("page_views", 0)),
+                             orders=int(r.get("orders", 0)))
+                  for r in rows]
+        t = analyse_trend(product_id=pid, title=rows[0].get("title", pid),
+                          history=points, min_days=min_days)
+        print(f"\n  {t.title}  [{t.shape}]")
+        print(f"    {t.prior_daily_units:.1f} -> {t.recent_daily_units:.1f} units/day "
+              f"({t.change_pct:+.0f}%)")
+        if t.peak_day:
+            print(f"    peak {t.peak_day} ({t.days_since_peak}d ago), "
+                  f"volatility {t.volatility:.2f}, conversion {t.conversion_rate_pct:.2f}%")
+        print(f"    {t.interpretation}")
+        print(f"    -> {t.inventory_guidance}")
+        print(f"    ({t.confidence_note})")
+    return 0
+
+
+def cmd_tiktok_report(args, policy, store) -> int:
+    """Daily TikTok optimisation pass over seed or live performance data."""
+    from .tiktok import DailyPoint, analyse_trend, build_optimisation_report, compute_profit
+
+    ops, source = load_operations()
+    history = ops.get("tiktok_daily_performance", {})
+    costs = ops.get("tiktok_costs", {})
+    if not history:
+        print("No TikTok performance history available.", file=sys.stderr)
+        return 1
+
+    _hr("TIKTOK DAILY OPTIMISATION REPORT")
+    if source != "live":
+        print("  ! NOT REAL DATA — this is seed input and exists to show the "
+              "pipeline runs.\n")
+
+    min_days = int(policy.tiktok["min_trend_history_days"])
+    trends, profits, inventory = [], {}, []
+    for pid, rows in history.items():
+        if pid.startswith("_"):
+            continue
+        points = [DailyPoint(day=r["day"], units=int(r["units"]),
+                             gmv=float(r.get("gmv", 0)),
+                             page_views=int(r.get("page_views", 0)),
+                             orders=int(r.get("orders", 0)))
+                  for r in rows]
+        trends.append(analyse_trend(product_id=pid, title=rows[0].get("title", pid),
+                                    history=points, min_days=min_days))
+        c = costs.get(pid, {})
+        profits[pid] = compute_profit(
+            policy=policy, product_id=pid,
+            units=sum(p.units for p in points),
+            gross_revenue=sum(p.gmv for p in points),
+            cogs_per_unit=float(c.get("cogs_per_unit", 0.0)),
+            shipping_per_unit=float(c.get("shipping_per_unit", 0.0)),
+            ad_cost=float(c.get("ad_cost", 0.0)),
+            affiliate_rate_pct=c.get("affiliate_rate_pct"),
+        )
+        inventory.append({"product_id": pid,
+                          "on_hand_units": int(c.get("on_hand_units", 0))})
+
+    print("  PROFIT BY PRODUCT")
+    print(f"  {'Product':<28}{'Units':>7}{'GMV':>11}{'Net':>11}"
+          f"{'Margin':>9}{'Take':>8}  Basis")
+    for t in trends:
+        p = profits[t.product_id]
+        print(f"  {t.title[:27]:<28}{p.units:>7}{p.gross_revenue:>11,.2f}"
+              f"{p.pre_tax_profit:>11,.2f}{p.margin_pct:>8.1f}%"
+              f"{p.take_rate_pct:>7.1f}%  {p.revenue_basis}")
+
+    total_pre = sum(p.pre_tax_profit for p in profits.values())
+    total_post = sum(p.after_tax_profit for p in profits.values())
+    print(f"\n  Pre-tax: {total_pre:,.2f}   After-tax: {total_post:,.2f}")
+
+    actions, notes = build_optimisation_report(
+        policy=policy, trends=trends, profits=profits, inventory=inventory,
+        take_rate_pct=args.take_rate,
+    )
+
+    _hr("RECOMMENDED ACTIONS")
+    if not actions:
+        print("  Nothing requiring action today.")
+    for i, a in enumerate(actions, 1):
+        flag = " [NEEDS APPROVAL]" if a.requires_approval else ""
+        print(f"\n  {i}. [{a.priority}] {a.title} — {a.action}{flag}")
+        print(f"     {a.rationale}")
+        if a.estimated_impact_usd:
+            print(f"     Estimated impact: ${a.estimated_impact_usd:,.2f}")
+    if notes:
+        print()
+        for n in notes:
+            print(f"  ! {n}")
+    return 0
+
+
 def cmd_approvals(args, policy, store) -> int:
     pending = store.pending_approvals()
     _hr(f"PENDING APPROVALS ({len(pending)})")
@@ -621,6 +829,24 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("capital", help="capital position, concentration, turns, signals")
 
+    sub.add_parser("tiktok-verify", help="verify the TikTok Shop connection")
+    sub.add_parser("tiktok-products", help="live TikTok inventory")
+
+    p_tto = sub.add_parser("tiktok-orders", help="recent TikTok orders")
+    p_tto.add_argument("--since", default="")
+    p_tto.add_argument("--limit", type=int, default=25)
+
+    p_tts = sub.add_parser("tiktok-settlements",
+                           help="reconcile the real take rate against policy")
+    p_tts.add_argument("--days", type=int, default=30)
+
+    sub.add_parser("tiktok-trends", help="classify demand curves per product")
+
+    p_ttr = sub.add_parser("tiktok-report", help="daily TikTok optimisation report")
+    p_ttr.add_argument("--take-rate", type=float, default=None,
+                       dest="take_rate",
+                       help="settled take rate %% for fee-drift comparison")
+
     sub.add_parser("approvals", help="list actions awaiting human approval")
 
     p_ap = sub.add_parser("approve", help="approve a pending action")
@@ -657,6 +883,10 @@ def main(argv: list[str] | None = None) -> int:
         "amazon-verify": cmd_amazon_verify, "amazon-search": cmd_amazon_search,
         "amazon-fees": cmd_amazon_fees, "amazon-inventory": cmd_amazon_inventory,
         "amazon-orders": cmd_amazon_orders, "amazon-offers": cmd_amazon_offers,
+        "tiktok-verify": cmd_tiktok_verify, "tiktok-products": cmd_tiktok_products,
+        "tiktok-orders": cmd_tiktok_orders,
+        "tiktok-settlements": cmd_tiktok_settlements,
+        "tiktok-trends": cmd_tiktok_trends, "tiktok-report": cmd_tiktok_report,
     }
     try:
         return handlers[args.cmd](args, policy, store)
@@ -670,6 +900,12 @@ def main(argv: list[str] | None = None) -> int:
         if exc.request_id:
             print(f"\n  Amazon request id: {exc.request_id} "
                   "(quote this in a Selling Partner support case).", file=sys.stderr)
+        return 3
+    except TikTokAPIError as exc:
+        print(f"\nTIKTOK API ERROR\n  {exc}", file=sys.stderr)
+        if exc.request_id:
+            print(f"\n  TikTok request id: {exc.request_id} "
+                  "(quote this in a Partner Center ticket).", file=sys.stderr)
         return 3
     except WriteNotPermitted as exc:
         print(f"\nBLOCKED\n  {exc}", file=sys.stderr)

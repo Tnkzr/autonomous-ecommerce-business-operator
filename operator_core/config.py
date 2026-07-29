@@ -81,6 +81,10 @@ class Policy:
         return self.raw["account_health"]
 
     @property
+    def tiktok(self) -> dict[str, Any]:
+        return self.raw["tiktok"]
+
+    @property
     def live_trading_enabled(self) -> bool:
         return bool(self.meta.get("live_trading_enabled", False))
 
@@ -117,6 +121,7 @@ REQUIRED_SECTIONS = (
     "capital",
     "signals",
     "account_health",
+    "tiktok",
 )
 
 
@@ -232,6 +237,21 @@ def _validate(raw: dict[str, Any], path: Path) -> None:
         raise PolicyError(
             "signals.min_positive_signals must be at least 1 — the charter requires "
             "corroboration before capital is committed."
+        )
+
+    tt = raw["tiktok"]
+    if float(tt["max_autonomous_price_change_pct"]) > float(
+            raw["pricing"]["max_daily_price_change_pct"]):
+        raise PolicyError(
+            "tiktok.max_autonomous_price_change_pct exceeds the global "
+            "pricing.max_daily_price_change_pct, which would let a TikTok write "
+            "bypass the portfolio-wide limit."
+        )
+    if int(tt["min_trend_history_days"]) < 7:
+        raise PolicyError(
+            f"tiktok.min_trend_history_days={tt['min_trend_history_days']} is too "
+            "short to tell growth from a decaying spike, and those call for "
+            "opposite inventory decisions."
         )
 
     health = raw["account_health"]

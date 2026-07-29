@@ -127,11 +127,47 @@ storage_per_unit_month = 0.15
 expected_return_rate_pct = 6.0
 
 [fees.tiktok]
-referral_pct = 8.0                  # commission
-payment_pct = 2.0
+referral_pct = 8.0                  # platform commission
+payment_pct = 2.0                   # transaction fee
 fulfillment_flat = 5.00
 storage_per_unit_month = 0.20
 expected_return_rate_pct = 9.0      # social commerce returns run high
+# Affiliate/creator commission is per-product and optional — it applies only to
+# products enrolled in the creator programme. Set to the shop's default rate;
+# per-product rates override it.
+affiliate_commission_pct = 0.0
+# Reconcile all of the above against `tiktok-settlements`. TikTok's realised
+# take rate is frequently several points above the headline commission once
+# transaction fees, affiliate payouts, and seller-funded promotions land.
+
+
+# -----------------------------------------------------------------------------
+# TIKTOK SHOP OPERATIONS
+# TikTok enforces content policy faster and more broadly than the other
+# marketplaces — a violation can suspend the shop, not just a listing — so its
+# write thresholds are deliberately tighter.
+# -----------------------------------------------------------------------------
+[tiktok]
+region = "US"
+# Every listing write is reviewed by a human before it goes out. TikTok product
+# updates replace rather than merge, so a partial payload silently clears
+# attributes that were previously set.
+require_approval_for_product_create = true
+require_approval_for_product_update = true
+# Price and stock moves are lower-risk and can run inside these bounds.
+max_autonomous_price_change_pct = 5.0
+max_autonomous_inventory_change_units = 500
+# Below this margin a product is not worth promoting regardless of volume;
+# TikTok's take rate plus return rate eats thin margins alive.
+min_promotable_margin_pct = 25.0
+# Trend analysis needs this much history before it can distinguish real growth
+# from a decaying spike. Those call for opposite inventory decisions.
+min_trend_history_days = 14
+# A spike this many times the mean, already past its peak, is treated as decay
+# rather than demand.
+spike_multiple_of_mean = 3.0
+# Days of cover above which a spike-decay product is flagged for clearance.
+overstock_days_after_spike = 90
 
 
 # -----------------------------------------------------------------------------

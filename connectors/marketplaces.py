@@ -1,10 +1,10 @@
 """Connector registry.
 
-Amazon is fully implemented in `connectors.amazon`. The remaining four are
-still declarations: they name the exact credentials their real API needs, so
-`operator status` reports precisely what to provision, and their reads fail
-loudly rather than fabricating data. Each class documents the endpoints to
-implement and the gotcha that matters most for it.
+Amazon (`connectors.amazon`) and TikTok Shop (`connectors.tiktok`) are fully
+implemented. Shopify, Walmart, and eBay are still declarations: they name the
+exact credentials their real API needs, so `operator status` reports precisely
+what to provision, and their reads fail loudly rather than fabricating data.
+Each documents the endpoints to implement and the gotcha that matters most.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from .amazon import AmazonConnector
+from .tiktok import TikTokShopConnector
 from .base import DataEnvelope, MarketplaceConnector
 
 
@@ -86,23 +87,6 @@ class EbayConnector(_UnimplementedReads):
     name = "ebay"
     required_env = ("EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_REFRESH_TOKEN")
     docs_url = "https://developer.ebay.com/api-docs/sell/static/oauth/oauth-tokens.html"
-
-
-class TikTokShopConnector(_UnimplementedReads):
-    """TikTok Shop Partner API.
-
-    Endpoints: /order/202309/orders/search, /product/202312/products/search,
-    /logistics, ads via the TikTok Marketing API.
-
-    Gotcha: every request needs an HMAC-SHA256 signature over sorted query
-    params plus the body. Sign incorrectly and you get an opaque error, so
-    build and test the signer before anything else.
-    """
-
-    name = "tiktok"
-    required_env = ("TIKTOK_APP_KEY", "TIKTOK_APP_SECRET", "TIKTOK_SHOP_ACCESS_TOKEN",
-                    "TIKTOK_SHOP_ID")
-    docs_url = "https://partner.tiktokshop.com/docv2/page/api-overview"
 
 
 CONNECTOR_REGISTRY: dict[str, type[MarketplaceConnector]] = {

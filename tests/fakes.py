@@ -255,3 +255,157 @@ PATCH_ACCEPTED = {
     "submissionId": "sub-12345",
     "issues": [],
 }
+
+
+# ---------------------------------------------------------------------------
+# TikTok Shop fixtures.
+#
+# Note the shape: TikTok wraps everything in {code, message, data, request_id}
+# and returns HTTP 200 even for failures. The fixtures mirror that exactly,
+# because a client that only checks HTTP status passes tests built on a
+# friendlier shape and then silently swallows every real error.
+# ---------------------------------------------------------------------------
+from connectors.tiktok.transport import Response as TTResponse
+
+
+class TikTokSender:
+    """Replays queued TikTok responses and records the requests made."""
+
+    def __init__(self, script: list) -> None:
+        self.script = list(script)
+        self.requests: list[dict[str, Any]] = []
+
+    def __call__(self, *, method: str, url: str, headers: dict[str, str],
+                 body: str | None, timeout: float) -> TTResponse:
+        self.requests.append({
+            "method": method, "url": url, "headers": headers, "body": body,
+        })
+        if not self.script:
+            raise AssertionError(f"TikTokSender exhausted; unexpected {method} {url}")
+        entry = self.script.pop(0)
+        if callable(entry):
+            entry = entry(method=method, url=url, headers=headers, body=body)
+        status, payload, resp_headers = entry
+        return TTResponse(status=status, headers=resp_headers or {}, body=payload)
+
+    @property
+    def last(self) -> dict[str, Any]:
+        return self.requests[-1]
+
+    def urls(self) -> list[str]:
+        return [r["url"] for r in self.requests]
+
+
+class FakeTikTokTokens:
+    def __init__(self, token: str = "tt-access-token") -> None:
+        self.token = token
+        self.calls = 0
+        self.invalidations = 0
+        self.warnings: list[str] = []
+
+    def access_token(self, *, force_refresh: bool = False) -> str:
+        self.calls += 1
+        return self.token
+
+    def invalidate(self) -> None:
+        self.invalidations += 1
+
+
+def tt_ok(data: dict, headers: dict | None = None) -> tuple:
+    """A successful TikTok response: HTTP 200, code 0."""
+    return (200, {"code": 0, "message": "Success", "data": data,
+                  "request_id": "req-test"}, headers or {})
+
+
+def tt_err(code: int, message: str, *, status: int = 200,
+           headers: dict | None = None) -> tuple:
+    """A TikTok failure. Note status defaults to 200 — that is the real trap."""
+    return (status, {"code": code, "message": message, "data": {},
+                     "request_id": "req-test"}, headers or {})
+
+
+TT_SHOPS = {
+    "shops": [
+        {"id": "7000000000000000001", "name": "Test Shop US",
+         "cipher": "ROW_CIPHER_ABC", "region": "US", "seller_type": "LOCAL"},
+        {"id": "7000000000000000002", "name": "Other Shop",
+         "cipher": "ROW_CIPHER_XYZ", "region": "GB", "seller_type": "LOCAL"},
+    ]
+}
+
+TT_PRODUCTS = {
+    "products": [
+        {
+            "id": "170000000001", "title": "Bamboo Drawer Organizer",
+            "status": "ACTIVATE", "create_time": 1750000000, "update_time": 1753000000,
+            "category_chains": [{"id": "601152", "local_name": "Home Storage"}],
+            "skus": [
+                {"id": "SKU-1", "seller_sku": "BAMBOO-ORG-01",
+                 "price": {"sale_price": "34.99", "currency": "USD"},
+                 "inventory": [{"warehouse_id": "WH1", "quantity": 240}]},
+            ],
+        },
+        {
+            "id": "170000000002", "title": "Pet Slicker Brush",
+            "status": "ACTIVATE", "create_time": 1750000000, "update_time": 1753000000,
+            "category_chains": [{"id": "601500", "local_name": "Pet Supplies"}],
+            "skus": [
+                {"id": "SKU-2", "seller_sku": "PETBRUSH-03",
+                 "price": {"sale_price": "24.99", "currency": "USD"},
+                 "inventory": [{"warehouse_id": "WH1", "quantity": 0},
+                               {"warehouse_id": "WH2", "quantity": 12}]},
+            ],
+        },
+    ],
+    "next_page_token": "",
+}
+
+TT_ORDERS = {
+    "orders": [
+        {
+            "id": "5770000000000001", "status": "COMPLETED", "create_time": 1753600000,
+            "payment": {"total_amount": "34.99", "sub_total": "34.99",
+                        "shipping_fee": "0.00", "seller_discount": "0.00",
+                        "platform_discount": "0.00", "tax": "2.80", "currency": "USD"},
+            "line_items": [
+                {"sku_id": "SKU-1", "seller_sku": "BAMBOO-ORG-01",
+                 "product_id": "170000000001", "product_name": "Bamboo Drawer Organizer",
+                 "sale_price": "34.99", "platform_discount": "0.00",
+                 "seller_discount": "0.00"},
+            ],
+        },
+        {
+            "id": "5770000000000002", "status": "UNPAID", "create_time": 1753610000,
+            "payment": {"total_amount": "24.99", "sub_total": "24.99",
+                        "currency": "USD"},
+            "line_items": [],
+        },
+    ],
+    "next_page_token": "",
+}
+
+TT_STATEMENTS = {
+    "statements": [
+        {"id": "STMT-1", "statement_time": 1753000000, "settlement_amount": "812.40",
+         "revenue_amount": "1049.70", "fee_amount": "-237.30",
+         "adjustment_amount": "0.00", "currency": "USD", "status": "PAID"},
+    ],
+    "next_page_token": "",
+}
+
+TT_PRODUCT_PERFORMANCE = {
+    "products": [
+        {"id": "170000000001", "title": "Bamboo Drawer Organizer",
+         "gmv": {"amount": "3499.00", "currency": "USD"},
+         "units_sold": 100, "orders": 96, "page_views": 8200,
+         "unique_visitors": 6100, "click_through_rate": 0.031,
+         "sku_orders_conversion_rate": 0.0117},
+    ],
+    "next_page_token": "",
+}
+
+TT_CREATE_OK = {
+    "product_id": "170000000003",
+    "skus": [{"id": "SKU-9", "seller_sku": "NEW-1"}],
+    "warnings": [{"message": "Image resolution below recommended 800x800"}],
+}

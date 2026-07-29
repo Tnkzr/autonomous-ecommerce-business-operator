@@ -500,5 +500,493 @@
         "detail": "Rank 4,210 in Home & Kitchen"
       }
     ]
+  },
+  "tiktok_daily_performance": {
+    "_comment": "SEED DATA \u2014 not real TikTok performance.",
+    "170000000001": [
+      {
+        "day": "2026-07-01",
+        "title": "Bamboo Drawer Organizer",
+        "units": 3,
+        "gmv": 104.97,
+        "page_views": 400,
+        "orders": 3
+      },
+      {
+        "day": "2026-07-02",
+        "title": "Bamboo Drawer Organizer",
+        "units": 4,
+        "gmv": 139.96,
+        "page_views": 400,
+        "orders": 4
+      },
+      {
+        "day": "2026-07-03",
+        "title": "Bamboo Drawer Organizer",
+        "units": 4,
+        "gmv": 139.96,
+        "page_views": 400,
+        "orders": 4
+      },
+      {
+        "day": "2026-07-04",
+        "title": "Bamboo Drawer Organizer",
+        "units": 5,
+        "gmv": 174.95,
+        "page_views": 400,
+        "orders": 5
+      },
+      {
+        "day": "2026-07-05",
+        "title": "Bamboo Drawer Organizer",
+        "units": 5,
+        "gmv": 174.95,
+        "page_views": 400,
+        "orders": 5
+      },
+      {
+        "day": "2026-07-06",
+        "title": "Bamboo Drawer Organizer",
+        "units": 6,
+        "gmv": 209.94,
+        "page_views": 400,
+        "orders": 6
+      },
+      {
+        "day": "2026-07-07",
+        "title": "Bamboo Drawer Organizer",
+        "units": 7,
+        "gmv": 244.93,
+        "page_views": 420,
+        "orders": 7
+      },
+      {
+        "day": "2026-07-08",
+        "title": "Bamboo Drawer Organizer",
+        "units": 9,
+        "gmv": 314.91,
+        "page_views": 540,
+        "orders": 9
+      },
+      {
+        "day": "2026-07-09",
+        "title": "Bamboo Drawer Organizer",
+        "units": 11,
+        "gmv": 384.89,
+        "page_views": 660,
+        "orders": 11
+      },
+      {
+        "day": "2026-07-10",
+        "title": "Bamboo Drawer Organizer",
+        "units": 12,
+        "gmv": 419.88,
+        "page_views": 720,
+        "orders": 12
+      },
+      {
+        "day": "2026-07-11",
+        "title": "Bamboo Drawer Organizer",
+        "units": 14,
+        "gmv": 489.86,
+        "page_views": 840,
+        "orders": 14
+      },
+      {
+        "day": "2026-07-12",
+        "title": "Bamboo Drawer Organizer",
+        "units": 15,
+        "gmv": 524.85,
+        "page_views": 900,
+        "orders": 15
+      },
+      {
+        "day": "2026-07-13",
+        "title": "Bamboo Drawer Organizer",
+        "units": 16,
+        "gmv": 559.84,
+        "page_views": 960,
+        "orders": 16
+      },
+      {
+        "day": "2026-07-14",
+        "title": "Bamboo Drawer Organizer",
+        "units": 17,
+        "gmv": 594.83,
+        "page_views": 1020,
+        "orders": 17
+      }
+    ],
+    "170000000002": [
+      {
+        "day": "2026-07-01",
+        "title": "Viral Pet Slicker Brush",
+        "units": 2,
+        "gmv": 49.98,
+        "page_views": 400,
+        "orders": 2
+      },
+      {
+        "day": "2026-07-02",
+        "title": "Viral Pet Slicker Brush",
+        "units": 3,
+        "gmv": 74.97,
+        "page_views": 400,
+        "orders": 3
+      },
+      {
+        "day": "2026-07-03",
+        "title": "Viral Pet Slicker Brush",
+        "units": 4,
+        "gmv": 99.96,
+        "page_views": 400,
+        "orders": 4
+      },
+      {
+        "day": "2026-07-04",
+        "title": "Viral Pet Slicker Brush",
+        "units": 95,
+        "gmv": 2374.05,
+        "page_views": 5700,
+        "orders": 95
+      },
+      {
+        "day": "2026-07-05",
+        "title": "Viral Pet Slicker Brush",
+        "units": 120,
+        "gmv": 2998.8,
+        "page_views": 7200,
+        "orders": 120
+      },
+      {
+        "day": "2026-07-06",
+        "title": "Viral Pet Slicker Brush",
+        "units": 70,
+        "gmv": 1749.3,
+        "page_views": 4200,
+        "orders": 70
+      },
+      {
+        "day": "2026-07-07",
+        "title": "Viral Pet Slicker Brush",
+        "units": 35,
+        "gmv": 874.65,
+        "page_views": 2100,
+        "orders": 35
+      },
+      {
+        "day": "2026-07-08",
+        "title": "Viral Pet Slicker Brush",
+        "units": 18,
+        "gmv": 449.82,
+        "page_views": 1080,
+        "orders": 18
+      },
+      {
+        "day": "2026-07-09",
+        "title": "Viral Pet Slicker Brush",
+        "units": 9,
+        "gmv": 224.91,
+        "page_views": 540,
+        "orders": 9
+      },
+      {
+        "day": "2026-07-10",
+        "title": "Viral Pet Slicker Brush",
+        "units": 5,
+        "gmv": 124.95,
+        "page_views": 400,
+        "orders": 5
+      },
+      {
+        "day": "2026-07-11",
+        "title": "Viral Pet Slicker Brush",
+        "units": 4,
+        "gmv": 99.96,
+        "page_views": 400,
+        "orders": 4
+      },
+      {
+        "day": "2026-07-12",
+        "title": "Viral Pet Slicker Brush",
+        "units": 3,
+        "gmv": 74.97,
+        "page_views": 400,
+        "orders": 3
+      },
+      {
+        "day": "2026-07-13",
+        "title": "Viral Pet Slicker Brush",
+        "units": 2,
+        "gmv": 49.98,
+        "page_views": 400,
+        "orders": 2
+      },
+      {
+        "day": "2026-07-14",
+        "title": "Viral Pet Slicker Brush",
+        "units": 2,
+        "gmv": 49.98,
+        "page_views": 400,
+        "orders": 2
+      }
+    ],
+    "170000000003": [
+      {
+        "day": "2026-07-01",
+        "title": "Magnetic Cable Clips",
+        "units": 1,
+        "gmv": 13.99,
+        "page_views": 3000,
+        "orders": 1
+      },
+      {
+        "day": "2026-07-02",
+        "title": "Magnetic Cable Clips",
+        "units": 1,
+        "gmv": 13.99,
+        "page_views": 3000,
+        "orders": 1
+      },
+      {
+        "day": "2026-07-03",
+        "title": "Magnetic Cable Clips",
+        "units": 2,
+        "gmv": 27.98,
+        "page_views": 6000,
+        "orders": 2
+      },
+      {
+        "day": "2026-07-04",
+        "title": "Magnetic Cable Clips",
+        "units": 1,
+        "gmv": 13.99,
+        "page_views": 3000,
+        "orders": 1
+      },
+      {
+        "day": "2026-07-05",
+        "title": "Magnetic Cable Clips",
+        "units": 1,
+        "gmv": 13.99,
+        "page_views": 3000,
+        "orders": 1
+      },
+      {
+        "day": "2026-07-06",
+        "title": "Magnetic Cable Clips",
+        "units": 2,
+        "gmv": 27.98,
+        "page_views": 6000,
+        "orders": 2
+      },
+      {
+        "day": "2026-07-07",
+        "title": "Magnetic Cable Clips",
+        "units": 1,
+        "gmv": 13.99,
+        "page_views": 3000,
+        "orders": 1
+      },
+      {
+        "day": "2026-07-08",
+        "title": "Magnetic Cable Clips",
+        "units": 1,
+        "gmv": 13.99,
+        "page_views": 3000,
+        "orders": 1
+      },
+      {
+        "day": "2026-07-09",
+        "title": "Magnetic Cable Clips",
+        "units": 2,
+        "gmv": 27.98,
+        "page_views": 6000,
+        "orders": 2
+      },
+      {
+        "day": "2026-07-10",
+        "title": "Magnetic Cable Clips",
+        "units": 1,
+        "gmv": 13.99,
+        "page_views": 3000,
+        "orders": 1
+      },
+      {
+        "day": "2026-07-11",
+        "title": "Magnetic Cable Clips",
+        "units": 1,
+        "gmv": 13.99,
+        "page_views": 3000,
+        "orders": 1
+      },
+      {
+        "day": "2026-07-12",
+        "title": "Magnetic Cable Clips",
+        "units": 1,
+        "gmv": 13.99,
+        "page_views": 3000,
+        "orders": 1
+      },
+      {
+        "day": "2026-07-13",
+        "title": "Magnetic Cable Clips",
+        "units": 2,
+        "gmv": 27.98,
+        "page_views": 6000,
+        "orders": 2
+      },
+      {
+        "day": "2026-07-14",
+        "title": "Magnetic Cable Clips",
+        "units": 1,
+        "gmv": 13.99,
+        "page_views": 3000,
+        "orders": 1
+      }
+    ],
+    "170000000004": [
+      {
+        "day": "2026-07-01",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-02",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-03",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-04",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-05",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-06",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-07",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-08",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-09",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-10",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-11",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-12",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-13",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      },
+      {
+        "day": "2026-07-14",
+        "title": "Ceramic Mug Set",
+        "units": 0,
+        "gmv": 0.0,
+        "page_views": 400,
+        "orders": 0
+      }
+    ]
+  },
+  "tiktok_costs": {
+    "_comment": "SEED DATA \u2014 not real costs.",
+    "170000000001": {
+      "cogs_per_unit": 10.3,
+      "shipping_per_unit": 1.2,
+      "ad_cost": 180.0,
+      "on_hand_units": 190,
+      "affiliate_rate_pct": 10.0
+    },
+    "170000000002": {
+      "cogs_per_unit": 5.3,
+      "shipping_per_unit": 0.9,
+      "ad_cost": 240.0,
+      "on_hand_units": 1400,
+      "affiliate_rate_pct": 15.0
+    },
+    "170000000003": {
+      "cogs_per_unit": 3.75,
+      "shipping_per_unit": 0.8,
+      "ad_cost": 95.0,
+      "on_hand_units": 800
+    },
+    "170000000004": {
+      "cogs_per_unit": 6.2,
+      "shipping_per_unit": 1.1,
+      "ad_cost": 0.0,
+      "on_hand_units": 310
+    }
   }
 }

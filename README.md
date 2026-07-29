@@ -13,8 +13,8 @@ journaled so the system can be measured over time.
 
 ## Read this first
 
-**Amazon SP-API is fully implemented** (`connectors/amazon/`). The other four
-marketplaces are still declarations.
+**Amazon SP-API** (`connectors/amazon/`) and **TikTok Shop** (`connectors/tiktok/`)
+are fully implemented. Shopify, Walmart, and eBay are still declarations.
 
 **No marketplace is connected in this checkout.** This repository contains the
 operator; it does not contain your business. Until credentials exist it runs in
@@ -49,7 +49,8 @@ python3 -m operator_core.cli capital                  # allocation, concentratio
 python3 -m operator_core.cli approvals                # what needs your sign-off
 python3 -m operator_core.cli approve <id> --by "Your Name"
 python3 -m operator_core.cli outcome <id> --met true --note "sold through in 38d"
-python3 -m unittest tests.test_operator tests.test_amazon tests.test_charter  # 184 tests
+python3 -m unittest tests.test_operator tests.test_amazon \
+    tests.test_charter tests.test_tiktok        # 259 tests
 ```
 
 ### Amazon commands (require live credentials)
@@ -61,6 +62,17 @@ python3 -m operator_core.cli amazon-fees B08XXXXXXX 34.99  # reconcile fees
 python3 -m operator_core.cli amazon-inventory
 python3 -m operator_core.cli amazon-orders --since 2026-07-01
 python3 -m operator_core.cli amazon-offers B08XXXXXXX
+```
+
+### TikTok Shop commands (require live credentials)
+
+```bash
+python3 -m operator_core.cli tiktok-verify                 # prove auth works
+python3 -m operator_core.cli tiktok-products               # inventory
+python3 -m operator_core.cli tiktok-orders --since 2026-07-01
+python3 -m operator_core.cli tiktok-settlements --days 30  # real take rate
+python3 -m operator_core.cli tiktok-trends                 # demand curve shapes
+python3 -m operator_core.cli tiktok-report                 # daily optimisation
 ```
 
 `status` verifies every configured connection by calling the API. Use
@@ -86,7 +98,9 @@ python3 -m operator_core.cli amazon-offers B08XXXXXXX
 | `store.py` | SQLite decision journal, metrics, price and supplier history. |
 | `reporting.py` | The daily report, including the provenance banner. |
 | `pipeline.py` | The daily run that wires it all together. |
+| `tiktok.py` | TikTok profit, trend shapes, daily optimisation. |
 | `connectors/amazon/` | SP-API: auth → transport → client → connector. |
+| `connectors/tiktok/` | TikTok Shop: signing → auth → transport → client → connector. |
 | `connectors/` | Other marketplace adapters. Fail loudly when unconfigured. |
 
 ## The policy file is the constitution
@@ -213,6 +227,87 @@ This matters more than it looks. A guessed trend signal does not stay a guess �
 it survives into a purchase order and becomes inventory sitting in a warehouse.
 Run `capital` to see the current coverage and the gap list.
 
+## TikTok Shop
+
+Same four-layer structure as Amazon, plus `signing.py` because every request
+carries an HMAC-SHA256 signature.
+
+Operations wired: Authorization 202309 (shops, shop_cipher), Product 202309
+(search, get, create, update, price, inventory, activate/deactivate,
+categories, category rules, brands), Order 202309 (search, detail), Finance
+202309 (statements, transactions), Analytics 202405 (shop and per-product
+performance), Logistics 202309 (warehouses).
+
+### The traps this integration handles
+
+**TikTok returns HTTP 200 for failures.** A rejected product, a bad
+`shop_cipher`, an expired token, a rate limit — all arrive as `200 OK` with a
+non-zero `code` in the body. A client that checks `response.status` treats every
+one of those as a success, and an inventory sync built that way silently stops
+syncing while reporting green. `transport._interpret` is the one place that
+decides success, and it checks the code.
+
+**The signature is unforgiving.** `sign` and `access_token` are excluded from
+the base string, parameters are sorted, the secret wraps the payload on both
+ends *and* is the HMAC key, and the signed body must be byte-identical to the
+body sent. The test vector is computed by hand rather than captured from the
+implementation, so it catches a change that is self-consistent but wrong.
+
+**Refresh tokens rotate.** TikTok issues a new refresh token on every refresh.
+Discard it and the integration keeps working until the old one expires, then
+dies months later with no deploy to correlate against. The provider surfaces
+rotation through a callback and warns when none is configured.
+
+**shop_cipher is not a credential you configure.** It comes from the
+authorisation endpoint and nearly every other call needs it, so the connector
+fetches it at startup and verifies the configured shop is one the app can reach.
+
+**Order value is not revenue.** Commission, transaction fees, affiliate
+payouts, and seller-funded promotions land between the two — typically 15-25%.
+`tiktok-settlements` reports the settled take rate against the policy baseline.
+
+**Prices are strings.** `12.30` as a float serialises as `12.3` and is rejected.
+The connector formats them; the client rejects a float before it reaches the API.
+
+**Product updates replace rather than merge.** Any attribute omitted from an
+update payload is cleared. The connector says so on every update.
+
+### Trend analysis: shape, not level
+
+The distinction that matters on TikTok is **growth versus spike-then-decay**.
+Both produce a strong 30-day total. One justifies a reorder; the other means the
+video that drove it stopped circulating and anything you buy will sit. A 30-day
+sum cannot tell them apart, so `analyse_trend` classifies the curve — comparing
+recent against prior, locating the peak, and checking whether the tail is
+holding. On the seed data it correctly flags a product with 372 units sold and a
+44% margin as `SPIKE_DECAY` with 90+ days of cover, and says not to reorder on
+the peak.
+
+### What TikTok does not expose
+
+**There is no competitor-pricing endpoint.** No equivalent of Amazon's Product
+Pricing API exists for TikTok sellers. Scraping the storefront breaches
+TikTok's Terms of Service and risks the shop this system exists to protect, so
+`fetch_competitor_offers` raises and explains the legitimate alternatives.
+Fabricated competitor prices would feed the repricer directly and mis-price live
+listings, which is the worst possible failure mode.
+
+Reviews are not retrievable through the Partner API either, and ads live in the
+separate TikTok Marketing API.
+
+### Policy screening before every write
+
+TikTok enforces content policy faster and more broadly than the other
+marketplaces, and a violation can suspend the whole shop rather than one
+listing. `screen_for_policy` runs before any create or update and blocks
+prohibited categories and efficacy claims *before* the API call — no rate-limit
+slot is spent on a product that would be rejected or, worse, accepted and then
+enforced against.
+
+`[tiktok]` in the policy file holds the write thresholds: product creates and
+updates always require human approval, price moves are capped at 5%
+autonomously, and inventory moves at 500 units.
+
 ## Design decisions worth knowing
 
 **Compliance outranks profit, structurally.** A candidate that trips a
@@ -287,12 +382,14 @@ so when the sample is too small to mean anything.
 
 ## Limitations
 
-- **The Amazon integration has never executed against a live account.** Every
-  path is covered by offline tests against scripted responses shaped like
-  Amazon's, but scripted responses are not the real API. Run reads first,
-  compare a day's orders against Seller Central by hand, and only then consider
-  enabling writes.
-- Advertising is not implemented. It requires the separate Amazon Ads API.
+- Run reads first on both marketplaces, reconcile a day's orders against Seller
+  Central and Seller Center by hand, and only then consider enabling writes.
+- Advertising is not implemented on either marketplace. Amazon needs the Ads
+  API and TikTok needs the Marketing API; both are separate applications.
+- **Neither integration has executed against a live account.** Every path is
+  covered by offline tests against scripted responses, but scripted responses
+  are not the real API.
+- TikTok exposes no competitor data and no retrievable reviews.
 - Seven of nine market signal sources have no connector. Confidence scores are
   computed from 30% of the intended evidence base and should be read as
   provisional.
