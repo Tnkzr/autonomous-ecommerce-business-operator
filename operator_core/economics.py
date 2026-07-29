@@ -7,6 +7,8 @@ guesses: an unknown fee raises rather than defaults to zero.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .config import Policy
 from .models import ProductCandidate, Supplier, UnitEconomics, money
 
@@ -20,6 +22,7 @@ def compute_unit_economics(
     supplier: Supplier,
     duty_pct: float = 0.0,
     ad_cost_per_unit: float = 0.0,
+    packaging_cost: float = 0.0,
     misc_cost: float = 0.0,
     units_for_amortisation: int = 0,
     months_of_storage: float = 1.0,
@@ -66,7 +69,9 @@ def compute_unit_economics(
         storage_fee=storage,
         return_cost=return_cost,
         ad_cost_per_unit=money(ad_cost_per_unit),
-        misc_cost=money(misc_cost),
+        # Packaging is folded into misc so the P&L identity stays exact; it is
+        # broken out at the call site where it is set.
+        misc_cost=money(misc_cost + packaging_cost),
     )
 
 
@@ -235,6 +240,85 @@ def cash_flow_projection(
         "peak_cash_exposure": cash_out,
         "after_tax_roi_pct": round(post_tax / cash_out * 100, 2) if cash_out else 0.0,
     }
+
+
+@dataclass
+class LifetimeValue:
+    """What a customer is worth beyond the first order."""
+
+    first_order_profit: float
+    repeat_rate_pct: float
+    orders_per_customer: float
+    lifetime_profit: float
+    payback_orders: float
+    basis: str                  # "observed" | "assumed"
+
+    @property
+    def multiple(self) -> float:
+        """How much more a customer is worth than their first order."""
+        if self.first_order_profit <= 0:
+            return 0.0
+        return round(self.lifetime_profit / self.first_order_profit, 2)
+
+
+def lifetime_value(
+    *,
+    policy: Policy,
+    first_order_profit: float,
+    repeat_rate_pct: float | None = None,
+    margin_decay_pct: float = 0.0,
+    max_orders: int = 10,
+) -> LifetimeValue:
+    """Estimate customer lifetime profit from a repeat rate.
+
+    Uses a geometric series: each order has `repeat_rate` probability of being
+    followed by another. Capped at `max_orders` because an infinite series
+    produces a confident number for a horizon nobody can forecast.
+
+    When no observed repeat rate exists this returns a 0% rate and says so.
+    Assuming an industry-typical rate would inflate every LTV in the system,
+    and LTV is exactly the number people use to justify paying more for
+    traffic — an invented one funds unprofitable acquisition.
+    """
+    if repeat_rate_pct is None:
+        basis = "assumed"
+        rate = 0.0
+    else:
+        basis = "observed"
+        rate = max(0.0, min(float(repeat_rate_pct), 95.0)) / 100.0
+
+    total = 0.0
+    order_profit = first_order_profit
+    expected_orders = 0.0
+    probability = 1.0
+    for _ in range(max_orders):
+        total += probability * order_profit
+        expected_orders += probability
+        probability *= rate
+        order_profit *= (1 - margin_decay_pct / 100.0)
+        if probability < 0.001:
+            break
+
+    payback = 1.0 if first_order_profit > 0 else float("inf")
+    return LifetimeValue(
+        first_order_profit=money(first_order_profit),
+        repeat_rate_pct=round(rate * 100, 1),
+        orders_per_customer=round(expected_orders, 2),
+        lifetime_profit=money(total),
+        payback_orders=payback,
+        basis=basis,
+    )
+
+
+def max_acquisition_cost(ltv: LifetimeValue, *, target_ltv_cac_ratio: float = 3.0) -> float:
+    """The most you can pay for a customer and still build a business.
+
+    A 3:1 LTV:CAC ratio is the conventional floor — below it, growth consumes
+    more cash than it produces even when each sale is nominally profitable.
+    """
+    if target_ltv_cac_ratio <= 0:
+        raise ValueError("target_ltv_cac_ratio must be positive.")
+    return money(ltv.lifetime_profit / target_ltv_cac_ratio)
 
 
 def cash_cycle_days(supplier: Supplier, *, payment_terms_days: int = 0,

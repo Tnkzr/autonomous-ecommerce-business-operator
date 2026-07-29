@@ -41,20 +41,40 @@ class SourceState(str, Enum):
 # Which sources have a real connector today. Flip a value here only when the
 # connector actually exists and has returned live data at least once.
 SOURCE_CONNECTORS = {
+    # Live: our own TikTok shop analytics tell us how OUR products are moving.
+    "tiktok_product_velocity": "connectors.tiktok (Analytics 202405)",
     "amazon_sales_rank": "connectors.amazon (SP-API Catalog Items)",
-    "amazon_search_volume": None,     # needs Brand Analytics access
+    # Everything below needs a feed that does not exist yet.
+    "tiktok_hashtag_momentum": None,
+    "tiktok_sound_trend": None,
+    "tiktok_creator_adoption": None,
+    "amazon_search_volume": None,
     "google_trends": None,
-    "social_tiktok": None,
     "social_reddit": None,
     "social_pinterest": None,
     "social_youtube": None,
     "news_regulatory": None,
-    "seasonality": None,              # needs >=1 year of own sales history
+    "seasonality": None,
 }
 
 # What it would take to wire each one, so the gap is actionable rather than
 # just reported.
 SOURCE_REQUIREMENTS = {
+    "tiktok_hashtag_momentum": (
+        "TikTok Creative Center has no public API. Options: the TikTok Research "
+        "API (academic/approved use only), a commercial social-listening "
+        "provider with a TikTok data agreement, or manual weekly logging "
+        "through the signals interface. Scraping the Creative Center breaches "
+        "TikTok's ToS and risks the shop."
+    ),
+    "tiktok_sound_trend": (
+        "Same as hashtag momentum — no public API. Trending sounds are visible "
+        "in-app and can be logged manually; they cannot be pulled."
+    ),
+    "tiktok_creator_adoption": (
+        "TikTok Shop's Creator Marketplace API requires separate approval and "
+        "covers creators you have a relationship with, not the open market."
+    ),
     "amazon_search_volume": "Amazon Brand Analytics (requires Brand Registry).",
     "google_trends": "Google Trends has no official API; a licensed data "
                      "provider or an approved scraping agreement is needed.",

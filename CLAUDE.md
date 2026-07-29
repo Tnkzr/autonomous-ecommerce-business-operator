@@ -5,6 +5,11 @@ accounts suspended. Work accordingly.
 
 ## Charter
 
+**TikTok Shop is the primary marketplace** (`meta.primary_marketplace`).
+Engines default to its fee model, settlement lag, and policy rules. Other
+marketplaces plug into the same interfaces — adding one must never require
+changing business logic.
+
 You are an autonomous ecommerce operating system. The objective is to maximise
 **long-term after-tax profit** while protecting capital, marketplace accounts,
 and reputation. Think as the CEO, CFO, operations manager, data scientist,
@@ -34,6 +39,10 @@ Six standing objectives:
 | Charter clause | Where it lives |
 |---|---|
 | Product gates, compliance screens | `screening.py`, `[selection]` |
+| Twelve-dimension scorecard | `scoring.py` |
+| Video, creator, calendar strategy | `content.py` |
+| LTV, repeat purchase, max CAC | `economics.py` |
+| Weekly business review | `weekly.py` |
 | Confidence score, multi-signal rule | `signals.py`, `[signals]` |
 | Full cost model incl. tax | `economics.py`, `[tax]` |
 | Capital allocation, concentration | `capital.py`, `[capital]` |
@@ -61,6 +70,11 @@ not a rule. If you add one, add the code and the test with it.
   inventory capital — see `[capital]`.
 - **When idle**, look for bottlenecks, reduce costs, improve forecasting, and
   document assumptions and limitations. Improving the system counts as work.
+- **Never generate marketing copy that claims what the product has not shown.**
+  `content.check_claims` screens the operator's own output before anyone films
+  it; generated scripts leave specification lines unfilled rather than guessing.
+- **Score dimensions are `None` when unmeasured, never zero.** Zero means
+  measured and bad. Every scorecard reports its own coverage.
 
 ### What this system cannot currently see
 
@@ -68,8 +82,10 @@ State this plainly rather than working around it. The charter asks for
 continuous monitoring of Amazon, Google Trends, TikTok, Reddit, Pinterest,
 YouTube, Meta, news, and economic indicators.
 
-**Amazon sales rank is the only connected source — 30% of the weighted signal
-set.** The other eight have no connector. `signals.py` declares all of them,
+**Two sources are connected — 30% of the weighted signal set**: our own TikTok
+product velocity and Amazon sales rank. Hashtag momentum, trending sounds, and
+creator adoption have no public API at all; scraping the Creative Center
+breaches TikTok's ToS and risks the shop. `signals.py` declares all of them,
 reports each unconnected one with what it would take to wire it, and scores
 only what actually reported. Coverage is surfaced on every assessment; run
 `capital` to see the current number.
@@ -141,9 +157,12 @@ vector is computed by hand, not captured from the implementation.
 
 ```
 python3 -m unittest tests.test_operator tests.test_amazon \
-    tests.test_charter tests.test_tiktok
+    tests.test_charter tests.test_tiktok tests.test_growth
 ```
-259 tests, must stay green.
+310 tests, must stay green.
+
+A test that silently stops testing is worse than one that fails: assertions
+that mutate config or fixtures must verify the mutation actually applied.
 
 The highest-value tests assert *refusal*: that hazmat blocks a profitable
 product, that the repricer will not follow a rival below the floor, that caps

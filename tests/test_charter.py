@@ -470,9 +470,18 @@ class TestSupplierDeterioration(unittest.TestCase):
 
 class TestCharterPolicyValidation(unittest.TestCase):
     def _mutate(self, old: str, new: str):
+        """Write a policy file with one value changed.
+
+        Asserts the substitution actually happened. A silent no-op here makes
+        the test pass while testing nothing, which is worse than failing.
+        """
         import tempfile
+        original = POLICY.source_path.read_text()
+        self.assertIn(old, original,
+                      f"Policy no longer contains {old!r}; this test is stale "
+                      "and has stopped exercising the validator.")
         p = Path(tempfile.mkdtemp()) / "p.toml"
-        p.write_text(POLICY.source_path.read_text().replace(old, new))
+        p.write_text(original.replace(old, new))
         return p
 
     def test_reserves_cannot_consume_all_capital(self):
@@ -482,8 +491,8 @@ class TestCharterPolicyValidation(unittest.TestCase):
 
     def test_signal_weights_must_normalise(self):
         with self.assertRaises(PolicyError):
-            load_policy(self._mutate("amazon_sales_rank = 0.30",
-                                     "amazon_sales_rank = 0.90"))
+            load_policy(self._mutate("tiktok_product_velocity = 0.18",
+                                     "tiktok_product_velocity = 0.90"))
 
     def test_min_signals_must_be_at_least_one(self):
         with self.assertRaises(PolicyError):

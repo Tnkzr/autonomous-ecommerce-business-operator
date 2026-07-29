@@ -33,6 +33,31 @@ class WriteNotPermitted(RuntimeError):
     """Raised when a mutating call is attempted outside live mode / approval."""
 
 
+class MarketplaceNotImplemented(NotImplementedError):
+    """This marketplace has no live implementation yet.
+
+    Distinct from a missing credential (`ConnectorNotConfigured`) and from an
+    unfinished function. It says the adapter for this marketplace has not been
+    written, names what would be needed, and subclasses NotImplementedError so
+    existing handlers keep working.
+    """
+
+    def __init__(self, marketplace: str, operation: str, *,
+                 endpoints: str = "", docs: str = "") -> None:
+        message = (
+            f"{marketplace}.{operation} has no live implementation. The connector "
+            f"declares its credentials and fails loudly rather than returning "
+            f"fabricated data."
+        )
+        if endpoints:
+            message += f" Endpoints to implement: {endpoints}."
+        if docs:
+            message += f" Docs: {docs}"
+        super().__init__(message)
+        self.marketplace = marketplace
+        self.operation = operation
+
+
 @dataclass
 class DataEnvelope:
     """Data plus provenance. Never hand raw data around without this."""
@@ -108,15 +133,15 @@ class MarketplaceConnector(ABC):
     # -- write interface ---------------------------------------------------
     def update_price(self, sku: str, price: float) -> DataEnvelope:
         self.require_write_permission("update_price")
-        raise NotImplementedError(f"{self.name}.update_price not implemented yet.")
+        raise MarketplaceNotImplemented(self.name, "update_price", docs=self.docs_url)
 
     def publish_listing(self, listing: dict[str, Any]) -> DataEnvelope:
         self.require_write_permission("publish_listing")
-        raise NotImplementedError(f"{self.name}.publish_listing not implemented yet.")
+        raise MarketplaceNotImplemented(self.name, "publish_listing", docs=self.docs_url)
 
     def update_ad_budget(self, campaign_id: str, budget: float) -> DataEnvelope:
         self.require_write_permission("update_ad_budget")
-        raise NotImplementedError(f"{self.name}.update_ad_budget not implemented yet.")
+        raise MarketplaceNotImplemented(self.name, "update_ad_budget", docs=self.docs_url)
 
     def verify_connection(self) -> dict[str, Any]:
         """Prove credentials actually work against the live API.

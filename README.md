@@ -1,7 +1,8 @@
 # Autonomous Ecommerce Business Operator
 
-A decision engine for running a multi-marketplace ecommerce operation across
-Amazon, Shopify, Walmart Marketplace, eBay, and TikTok Shop.
+A decision engine for running a **TikTok-Shop-first** ecommerce operation, with
+Amazon implemented and Shopify, Walmart, and eBay plugging into the same
+interfaces.
 
 It screens products, scores suppliers, prepares negotiations, calculates unit
 economics, drafts listings, reprices against competitors, plans inventory,
@@ -50,7 +51,8 @@ python3 -m operator_core.cli approvals                # what needs your sign-off
 python3 -m operator_core.cli approve <id> --by "Your Name"
 python3 -m operator_core.cli outcome <id> --met true --note "sold through in 38d"
 python3 -m unittest tests.test_operator tests.test_amazon \
-    tests.test_charter tests.test_tiktok        # 259 tests
+    tests.test_charter tests.test_tiktok \
+    tests.test_growth                          # 310 tests
 ```
 
 ### Amazon commands (require live credentials)
@@ -99,6 +101,9 @@ python3 -m operator_core.cli tiktok-report                 # daily optimisation
 | `reporting.py` | The daily report, including the provenance banner. |
 | `pipeline.py` | The daily run that wires it all together. |
 | `tiktok.py` | TikTok profit, trend shapes, daily optimisation. |
+| `scoring.py` | Twelve-dimension product scorecard with coverage. |
+| `content.py` | Hooks, scripts, shot lists, creators, content calendar. |
+| `weekly.py` | Weekly business review and self-derived engineering backlog. |
 | `connectors/amazon/` | SP-API: auth → transport → client → connector. |
 | `connectors/tiktok/` | TikTok Shop: signing → auth → transport → client → connector. |
 | `connectors/` | Other marketplace adapters. Fail loudly when unconfigured. |
@@ -308,6 +313,63 @@ enforced against.
 updates always require human approval, price moves are capped at 5%
 autonomously, and inventory moves at 500 units.
 
+## The growth engines
+
+### Product scorecard (`scoring.py`)
+
+Twelve dimensions: demand, trend, competition, margin, shipping, return risk,
+policy risk, supplier, review sentiment, virality, cash flow, overall.
+
+Two rules do the work:
+
+**Unmeasured is `None`, not zero.** Zero means measured and bad. Collapsing the
+two makes an unresearched product look identical to a researched terrible one.
+Every scorecard reports coverage, and ranking uses score × coverage — an 80 we
+can support beats a 90 we cannot.
+
+**Risk dimensions cap, but only when genuinely weak.** Below 60, policy risk and
+return risk stop averaging and start capping the overall. Averaging is how a
+trademark landmine with great margins gets funded. Capping whenever risk merely
+sits below average would cap everything and turn the warning into noise.
+
+Virality is explicitly **structural** — how well the product demonstrates on
+video, inferred from its own attributes. Real virality needs hashtag and sound
+data that no connector supplies, and the scorecard says so rather than implying
+it measured something it did not.
+
+### Content strategy (`content.py`)
+
+Hooks, voiceover scripts, second-by-second shot lists, captions, hashtags,
+creator briefs, and a rotating publishing calendar.
+
+What it refuses to do matters more than what it generates:
+
+- **Voiceovers leave a specification line unfilled.** The operator has not
+  received the product and does not know its material or dimensions. A script
+  that invents them becomes a false advertising claim the moment it is filmed.
+- **Social-proof hooks are omitted without a verified order count.** An
+  invented number is a false claim TikTok penalises the shop for.
+- **Hashtags are labelled evergreen, not trending.** Trend data needs a feed
+  that does not exist; a fabricated trending tag sends real production budget
+  at a guess.
+- **Generated copy is screened against TikTok's claim policy** before anyone
+  films it. The operator produces this text, so it checks its own output.
+
+Creator commission is bounded by the product's actual margin — offering a rate
+the product cannot fund buys volume at a loss.
+
+### Weekly business review (`weekly.py`)
+
+Profit, opportunities, risks, pipeline, store health, and experiments — each
+experiment carrying a hypothesis, a success metric, and a minimum sample, so it
+is a test rather than a change someone later claims credit for.
+
+The **engineering backlog is derived, not written**. The system introspects on
+measured gaps — signal coverage, unconfigured connectors, unresolved decisions,
+scorecard coverage — and every item must state what it costs the business
+today. An improvement that cannot answer that is a preference, and preferences
+do not belong on a backlog competing with buying inventory.
+
 ## Design decisions worth knowing
 
 **Compliance outranks profit, structurally.** A candidate that trips a
@@ -390,6 +452,13 @@ so when the sample is too small to mean anything.
   covered by offline tests against scripted responses, but scripted responses
   are not the real API.
 - TikTok exposes no competitor data and no retrievable reviews.
+- Virality scoring is structural, not observed. Hashtag momentum, trending
+  sounds, and creator adoption have no public API — the TikTok Research API is
+  approval-gated and Creative Center has none at all.
+- LTV assumes a 0% repeat rate until order history keyed by buyer exists. That
+  understates every customer's value and caps what the business will pay to
+  acquire one; it is deliberate, because an invented repeat rate funds
+  unprofitable acquisition.
 - Seven of nine market signal sources have no connector. Confidence scores are
   computed from 30% of the intended evidence base and should be read as
   provisional.

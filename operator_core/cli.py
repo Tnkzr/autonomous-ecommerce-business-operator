@@ -7,6 +7,9 @@
     python -m operator_core.cli suppliers SEED-BAMBOO-ORG-01
     python -m operator_core.cli price SEED-BAMBOO-ORG-01
     python -m operator_core.cli capital
+    python -m operator_core.cli score -v
+    python -m operator_core.cli content SEED-PETBRUSH-03
+    python -m operator_core.cli weekly
     python -m operator_core.cli approvals
     python -m operator_core.cli approve <action_id> --by "Name"
     python -m operator_core.cli outcome <action_id> --met true --note "..."
@@ -723,6 +726,212 @@ def cmd_tiktok_report(args, policy, store) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Scorecard, content strategy, and the weekly business review.
+# ---------------------------------------------------------------------------
+def _trend_lookup(policy, ops):
+    """Trend shape per product, when daily history exists."""
+    from .tiktok import DailyPoint, analyse_trend
+    out = {}
+    min_days = int(policy.tiktok["min_trend_history_days"])
+    for pid, rows in (ops.get("tiktok_daily_performance") or {}).items():
+        if pid.startswith("_") or not isinstance(rows, list):
+            continue
+        points = [DailyPoint(day=r["day"], units=int(r["units"]),
+                             gmv=float(r.get("gmv", 0)),
+                             page_views=int(r.get("page_views", 0)),
+                             orders=int(r.get("orders", 0)))
+                  for r in rows]
+        out[pid] = analyse_trend(product_id=pid, title=rows[0].get("title", pid),
+                                 history=points, min_days=min_days)
+    return out
+
+
+def cmd_score(args, policy, store) -> int:
+    """The twelve-dimension product scorecard."""
+    from .economics import economics_for_candidate
+    from .scoring import build_scorecard, rank
+
+    candidates = load_candidates()
+    ops, source = load_operations()
+    reviews = ops.get("reviews", {})
+
+    cards = []
+    for c in candidates:
+        econ = economics_for_candidate(policy, c)
+        revs = reviews.get(c.sku, [])
+        avg = (sum(r["rating"] for r in revs) / len(revs)) if revs else None
+        cards.append(build_scorecard(
+            policy, c, econ,
+            avg_rating=avg, review_count=len(revs),
+            marketplace=policy.meta.get("primary_marketplace", "tiktok"),
+        ))
+
+    _hr("PRODUCT SCORECARD")
+    if source != "live":
+        print(f"  ! Inputs are {source.upper()} data.\n")
+
+    for card in rank(cards):
+        print(f"\n  {card.sku}  [{card.verdict}]  {card.summary()}")
+        if args.verbose:
+            for d in card.dimensions:
+                value = "  n/a" if not d.measured else f"{d.value:5.0f}"
+                risk = " (risk)" if d.is_risk else ""
+                print(f"      {d.label:<22}{value}  {d.band:<11}{risk} {d.detail[:60]}")
+        else:
+            for line in card.strengths[:2]:
+                print(f"      + {line[:88]}")
+            for line in card.weaknesses[:2]:
+                print(f"      - {line[:88]}")
+        if card.capped_by:
+            print(f"      ! Capped by {card.capped_by} — a single disqualifying "
+                  "risk is not offset by strength elsewhere.")
+    print("\n  Ranked on score x coverage. A high score from few measured "
+          "dimensions is not a high score.")
+    return 0
+
+
+def cmd_content(args, policy, store) -> int:
+    """Video and creator strategy for one product."""
+    from .content import build_content_plan
+    from .economics import economics_for_candidate
+
+    cand = next((c for c in load_candidates() if c.sku == args.sku), None)
+    if not cand:
+        print(f"Unknown SKU {args.sku}", file=sys.stderr)
+        return 1
+
+    screened = screen_candidate(policy, cand)
+    if screened.decision.value == "REJECT":
+        print(f"Refusing to build a content plan for {args.sku}: it failed screening.")
+        print(f"  {screened.reason_summary()}")
+        print("\nCommissioning video for a product that cannot be sold compliantly "
+              "wastes production budget and invites someone to publish it anyway.")
+        return 1
+
+    econ = economics_for_candidate(policy, cand)
+    plan = build_content_plan(policy, cand, unit_margin=econ.net_profit,
+                              calendar_days=args.days)
+
+    _hr(f"CONTENT PLAN — {plan.sku}")
+    print(f"  {len(plan.concepts)} concepts · {len(plan.calendar)} scheduled posts")
+
+    for c in plan.concepts[:args.concepts]:
+        print(f"\n  [{c.concept_id}] {c.format} · ~{c.estimated_seconds:.0f}s")
+        print(f"    HOOK: \"{c.hook.line}\"")
+        print(f"    WHY:  {c.hook.why_it_works}")
+        print("    SHOT LIST:")
+        for shot in c.shot_list:
+            print(f"      {shot.order}. ({shot.duration_seconds:.0f}s) {shot.shot}")
+            print(f"         audio: {shot.audio}")
+            if shot.on_screen_text:
+                print(f"         text:  {shot.on_screen_text}")
+            print(f"         why:   {shot.purpose}")
+        print("    VOICEOVER:")
+        for line in c.voiceover.splitlines():
+            print(f"      {line}")
+        print(f"    CAPTION: {c.caption}")
+        print(f"    CTA: {c.call_to_action}")
+        if c.compliance_warnings:
+            print("    COMPLIANCE:")
+            for w in c.compliance_warnings:
+                print(f"      ! {w}")
+
+    _hr("CREATOR STRATEGY")
+    for b in plan.creator_briefs:
+        print(f"\n  {b.tier} ({b.follower_range}) — {b.commission_pct:.0f}% commission")
+        print(f"    Sample policy: {b.sample_policy}")
+        print(f"    Why: {b.rationale}")
+        if args.verbose:
+            print("    OUTREACH DRAFT:")
+            for line in b.outreach_message.splitlines():
+                print(f"      {line}")
+
+    _hr("HASHTAGS")
+    print(f"  {' '.join(plan.hashtag_strategy['tags'])}")
+    print(f"\n  {plan.hashtag_strategy['note']}")
+
+    _hr(f"CONTENT CALENDAR ({args.days} days)")
+    for e in plan.calendar[:14]:
+        print(f"  {e.day}  {e.slot}  {e.concept_id:<22}{e.format:<12}{e.objective}")
+    if len(plan.calendar) > 14:
+        print(f"  … {len(plan.calendar) - 14} more entries")
+
+    if plan.warnings:
+        print()
+        for w in plan.warnings:
+            print(f"  ! {w}")
+    return 0
+
+
+def cmd_weekly(args, policy, store) -> int:
+    """The weekly business review."""
+    from datetime import date, timedelta
+
+    from .account_health import assess as assess_health
+    from .capital import CapitalState, Position, concentration_report, portfolio_turns
+    from .economics import economics_for_candidate
+    from .scoring import build_scorecard
+    from .signals import available_weight
+    from .weekly import build_weekly_report, render_weekly_report, write_weekly_report
+
+    ops, source = load_operations()
+    week_ending = args.week_ending or date.today().isoformat()
+    end = date.fromisoformat(week_ending)
+
+    this_week = store.metrics_range((end - timedelta(days=6)).isoformat(),
+                                    end.isoformat())
+    last_week = store.metrics_range((end - timedelta(days=13)).isoformat(),
+                                    (end - timedelta(days=7)).isoformat())
+
+    candidates = load_candidates()
+    reviews = ops.get("reviews", {})
+    cards = []
+    for c in candidates:
+        econ = economics_for_candidate(policy, c)
+        revs = reviews.get(c.sku, [])
+        avg = (sum(r["rating"] for r in revs) / len(revs)) if revs else None
+        cards.append(build_scorecard(
+            policy, c, econ, avg_rating=avg, review_count=len(revs),
+            marketplace=policy.meta.get("primary_marketplace", "tiktok"),
+        ))
+
+    positions = [
+        Position(sku=x["sku"], category=x.get("category", "uncategorised"),
+                 supplier_id=x.get("supplier_id", "unknown"),
+                 units_on_hand=int(x["on_hand_units"]),
+                 units_inbound=int(x.get("inbound_units", 0)),
+                 unit_cost=float(x.get("unit_cost", 0.0)),
+                 annual_units_sold=float(x.get("daily_velocity", 0.0)) * 365)
+        for x in ops.get("inventory", [])
+    ]
+    capital_state = CapitalState(
+        total_capital_usd=float(policy.capital["total_capital_usd"]),
+        cash_available_usd=float(ops.get("spend_state", {}).get("cash_available_usd", 0)),
+        positions=positions,
+    )
+
+    report = build_weekly_report(
+        policy, store,
+        week_ending=week_ending, data_source=source,
+        metrics_this_week=this_week, metrics_last_week=last_week,
+        scorecards=cards,
+        trends=list(_trend_lookup(policy, ops).values()),
+        account_health=assess_health(policy, "tiktok", ops.get("account_health", {})),
+        capital_state=capital_state,
+        concentration=concentration_report(policy, capital_state),
+        turns=portfolio_turns(policy, capital_state),
+        signal_coverage_pct=available_weight(policy),
+        connector_status=all_status(),
+    )
+
+    content = render_weekly_report(policy, report)
+    path = write_weekly_report(policy, content, week_ending)
+    print(content)
+    print(f"\n[weekly review written to {path}]")
+    return 0
+
+
 def cmd_approvals(args, policy, store) -> int:
     pending = store.pending_approvals()
     _hr(f"PENDING APPROVALS ({len(pending)})")
@@ -829,6 +1038,18 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("capital", help="capital position, concentration, turns, signals")
 
+    p_score = sub.add_parser("score", help="twelve-dimension product scorecard")
+    p_score.add_argument("-v", "--verbose", action="store_true")
+
+    p_content = sub.add_parser("content", help="video, creator, and calendar plan")
+    p_content.add_argument("sku")
+    p_content.add_argument("--days", type=int, default=14)
+    p_content.add_argument("--concepts", type=int, default=2)
+    p_content.add_argument("-v", "--verbose", action="store_true")
+
+    p_weekly = sub.add_parser("weekly", help="weekly business review")
+    p_weekly.add_argument("--week-ending", dest="week_ending", default=None)
+
     sub.add_parser("tiktok-verify", help="verify the TikTok Shop connection")
     sub.add_parser("tiktok-products", help="live TikTok inventory")
 
@@ -880,6 +1101,7 @@ def main(argv: list[str] | None = None) -> int:
         "listing": cmd_listing, "suppliers": cmd_suppliers, "price": cmd_price,
         "approvals": cmd_approvals, "approve": cmd_approve, "outcome": cmd_outcome,
         "journal": cmd_journal, "capital": cmd_capital,
+        "score": cmd_score, "content": cmd_content, "weekly": cmd_weekly,
         "amazon-verify": cmd_amazon_verify, "amazon-search": cmd_amazon_search,
         "amazon-fees": cmd_amazon_fees, "amazon-inventory": cmd_amazon_inventory,
         "amazon-orders": cmd_amazon_orders, "amazon-offers": cmd_amazon_offers,

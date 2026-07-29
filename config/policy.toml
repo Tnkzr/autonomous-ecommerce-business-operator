@@ -11,6 +11,10 @@
 [meta]
 business_name = "Unnamed Store"
 base_currency = "USD"
+# TikTok Shop is the primary marketplace. Engines default to its fee model,
+# settlement lag, and policy rules; other marketplaces plug into the same
+# interfaces without changing business logic.
+primary_marketplace = "tiktok"
 # Set to false until live marketplace credentials are wired and verified.
 # While false, every connector refuses to perform writes of any kind.
 live_trading_enabled = false
@@ -304,14 +308,20 @@ min_confidence_score = 60.0         # 0-100
 # Signals older than this stop counting. Trend data decays fast.
 max_signal_age_days = 45
 
+# TikTok is the primary marketplace, so TikTok-native signals carry the most
+# weight. None of the TikTok trend sources are connected yet — signals.py
+# reports each one and what it would take to wire it.
 [signals.weights]
-amazon_sales_rank = 0.30            # live via SP-API
-amazon_search_volume = 0.15         # requires Brand Analytics
-google_trends = 0.15
-social_tiktok = 0.10
-social_reddit = 0.08
-social_pinterest = 0.05
-social_youtube = 0.05
+tiktok_product_velocity = 0.18      # live: own shop analytics
+tiktok_hashtag_momentum = 0.12
+tiktok_sound_trend = 0.06
+tiktok_creator_adoption = 0.08
+amazon_sales_rank = 0.12            # live via SP-API; cross-market demand proxy
+amazon_search_volume = 0.06
+google_trends = 0.12
+social_reddit = 0.06
+social_pinterest = 0.04
+social_youtube = 0.04
 news_regulatory = 0.07
 seasonality = 0.05
 

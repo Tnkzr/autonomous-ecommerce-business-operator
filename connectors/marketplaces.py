@@ -13,17 +13,18 @@ from typing import Any
 
 from .amazon import AmazonConnector
 from .tiktok import TikTokShopConnector
-from .base import DataEnvelope, MarketplaceConnector
+from .base import DataEnvelope, MarketplaceConnector, MarketplaceNotImplemented
 
 
 class _UnimplementedReads(MarketplaceConnector):
     """Shared read stubs that fail loudly rather than fabricating data."""
 
+    endpoints: str = ""
+
     def _reads(self, what: str) -> DataEnvelope:
         self.require_credentials()   # raises with a precise, actionable message
-        raise NotImplementedError(
-            f"{self.name}.{what} needs implementing against the live API. "
-            f"Credentials are present; wire the endpoint noted in the class docstring."
+        raise MarketplaceNotImplemented(
+            self.name, what, endpoints=self.endpoints, docs=self.docs_url,
         )
 
     def fetch_orders(self, *, since: str) -> DataEnvelope:
@@ -55,6 +56,7 @@ class ShopifyConnector(_UnimplementedReads):
     """
 
     name = "shopify"
+    endpoints = "orders, productVariants, inventoryLevels, publications"
     required_env = ("SHOPIFY_STORE_DOMAIN", "SHOPIFY_ADMIN_ACCESS_TOKEN")
     docs_url = "https://shopify.dev/docs/api/admin-graphql"
 
@@ -70,6 +72,7 @@ class WalmartConnector(_UnimplementedReads):
     """
 
     name = "walmart"
+    endpoints = "/v3/orders, /v3/inventory, /v3/items, /v3/price"
     required_env = ("WALMART_CLIENT_ID", "WALMART_CLIENT_SECRET")
     docs_url = "https://developer.walmart.com/doc/us/mp/us-mp-getting-started/"
 
@@ -85,6 +88,7 @@ class EbayConnector(_UnimplementedReads):
     """
 
     name = "ebay"
+    endpoints = "Fulfillment (orders), Inventory, Marketing, Browse"
     required_env = ("EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_REFRESH_TOKEN")
     docs_url = "https://developer.ebay.com/api-docs/sell/static/oauth/oauth-tokens.html"
 
