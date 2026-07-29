@@ -373,3 +373,89 @@ daily_report_hour = 7
 top_n_products = 5
 worst_n_products = 5
 output_dir = "reports"
+
+# ---------------------------------------------------------------------------
+# Shopify storefront. The destination for TikTok traffic.
+# ---------------------------------------------------------------------------
+[shopify]
+# Products are created as drafts and stay invisible until published. This is
+# the safety model, not a preference — see connectors/shopify/connector.py.
+create_as_draft = true
+# Publishing a product is irreversible in the way that matters: the page can be
+# indexed and bought within seconds. It goes through risk.authorise().
+publish_requires_approval = true
+# Discount codes with neither an end date nor a usage cap run until somebody
+# notices the margin. A code posted to a deals forum outruns the test it was
+# created for.
+max_discount_pct = 20.0
+require_bounded_discounts = true
+default_discount_days = 14
+# Handles are the product URL. Changing one after videos link to it costs every
+# view those videos earned, so they are generated once and pinned.
+pin_handles = true
+
+# ---------------------------------------------------------------------------
+# Publishing rhythm for the organic channel.
+# ---------------------------------------------------------------------------
+[publishing]
+posts_per_day = 2
+calendar_days = 14
+# Below this many views a video has not been distributed enough for its rates
+# to mean anything; it is counted but excluded from averages.
+min_views_for_rates = 1000
+# TikTok distributes in waves and a video can double by day three, so a reading
+# before this is provisional rather than final.
+judgement_hours = 48
+# Slots need this many posts before a "best time" is anything but noise: there
+# are 168 possible slots and a handful of posts always produces a winner.
+min_posts_per_slot = 3
+min_posts_for_timing = 15
+max_silent_days = 3
+
+# ---------------------------------------------------------------------------
+# Conversion funnel benchmarks.
+# These are thresholds for *diagnosis*, not forecasts. A stage below its number
+# gets investigated; nothing here predicts what a stage will do.
+# ---------------------------------------------------------------------------
+[conversion]
+min_views_for_diagnosis = 5000
+min_click_rate_pct = 0.5
+min_conversion_rate_pct = 1.0
+# Store-side recommendations below these samples are noise, and acting on noise
+# also destroys the baseline the change would have been compared against.
+min_sessions_for_recommendation = 500
+min_orders_for_recommendation = 25
+target_aov_usd = 45.0
+min_repeat_share_pct = 15.0
+max_refund_rate_pct = 5.0
+min_bundle_co_occurrences = 10
+
+# ---------------------------------------------------------------------------
+# Product and creative testing.
+# ---------------------------------------------------------------------------
+[experiments]
+# The effect worth detecting. Sizing a test to catch a 5% lift at this traffic
+# would need a sample the business will not reach this year.
+minimum_detectable_effect = 0.30
+power = 0.8
+default_min_sample = 500
+max_spend_per_test_usd = 150.0
+max_days_per_test = 21
+max_concurrent_tests = 4
+# An arm can win its comparison and still lose money. Scaling is gated on
+# contribution, not on beating a sibling.
+min_contribution_per_exposure_usd = 0.0
+
+# ---------------------------------------------------------------------------
+# Research pipeline. Ranked opportunities, with provenance per source.
+# ---------------------------------------------------------------------------
+[research]
+max_pipeline_size = 50
+# An opportunity nobody acted on goes stale; demand it was scored on has moved.
+stale_after_days = 30
+min_confidence_to_promote = 40.0
+min_sources_to_promote = 2
+# Opportunities are scored only on sources that actually reported. An absent
+# source contributes nothing rather than a neutral middle value, which would
+# quietly drag every score toward the mean.
+score_only_reporting_sources = true

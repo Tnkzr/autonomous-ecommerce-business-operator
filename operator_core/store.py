@@ -16,6 +16,7 @@ import sqlite3
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -112,6 +113,96 @@ CREATE TABLE IF NOT EXISTS price_history (
     new_price    REAL NOT NULL,
     reason       TEXT NOT NULL,
     applied      INTEGER NOT NULL DEFAULT 0
+);
+
+-- One row per video actually posted. The creative attributes are denormalised
+-- onto it on purpose: the learning engine asks "which hooks worked", and that
+-- question has to survive the creative bank being regenerated.
+CREATE TABLE IF NOT EXISTS published_videos (
+    package_id     TEXT PRIMARY KEY,
+    sku            TEXT NOT NULL,
+    published_at   TEXT NOT NULL,
+    weekday        INTEGER NOT NULL,
+    hour           INTEGER NOT NULL,
+    angle          TEXT NOT NULL DEFAULT '',
+    hook_archetype TEXT NOT NULL DEFAULT '',
+    format         TEXT NOT NULL DEFAULT '',
+    cta_variant    TEXT NOT NULL DEFAULT '',
+    caption_shape  TEXT NOT NULL DEFAULT '',
+    runtime_seconds REAL NOT NULL DEFAULT 0,
+    url            TEXT DEFAULT '',
+    notes          TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_videos_sku ON published_videos(sku);
+CREATE INDEX IF NOT EXISTS idx_videos_published ON published_videos(published_at);
+
+-- Video performance. `data_source` is not decoration: TikTok publishes no
+-- organic-analytics API for a shop's own posts, so these numbers are typed in
+-- from the app and are a reading at a point in time, not a live feed. A metric
+-- read on day 1 and one read on day 30 are different measurements of different
+-- things, so `measured_at` is part of the key.
+CREATE TABLE IF NOT EXISTS video_metrics (
+    package_id     TEXT NOT NULL,
+    measured_at    TEXT NOT NULL,
+    hours_since_post REAL NOT NULL DEFAULT 0,
+    views          INTEGER NOT NULL DEFAULT 0,
+    likes          INTEGER NOT NULL DEFAULT 0,
+    comments       INTEGER NOT NULL DEFAULT 0,
+    shares         INTEGER NOT NULL DEFAULT 0,
+    saves          INTEGER NOT NULL DEFAULT 0,
+    avg_watch_pct  REAL,
+    profile_visits INTEGER,
+    link_clicks    INTEGER,
+    data_source    TEXT NOT NULL DEFAULT 'manual',
+    PRIMARY KEY (package_id, measured_at)
+);
+
+-- Storefront funnel, one row per day per traffic channel. Sourced from the
+-- Shopify connector; `sessions` is nullable because the Admin API does not
+-- expose session counts and a zero there would read as "nobody visited".
+CREATE TABLE IF NOT EXISTS storefront_daily (
+    metric_date   TEXT NOT NULL,
+    channel       TEXT NOT NULL,
+    sessions      INTEGER,
+    orders        INTEGER NOT NULL DEFAULT 0,
+    revenue       REAL NOT NULL DEFAULT 0,
+    refunds       REAL NOT NULL DEFAULT 0,
+    new_customers INTEGER NOT NULL DEFAULT 0,
+    data_source   TEXT NOT NULL DEFAULT 'unknown',
+    PRIMARY KEY (metric_date, channel)
+);
+
+-- Experiments. The success criterion is stored at registration, before any
+-- result exists, because a threshold chosen after seeing the data is not a
+-- threshold — it is a rationalisation.
+CREATE TABLE IF NOT EXISTS experiments (
+    experiment_id    TEXT PRIMARY KEY,
+    created_at       TEXT NOT NULL,
+    sku              TEXT NOT NULL,
+    hypothesis       TEXT NOT NULL,
+    variable         TEXT NOT NULL,
+    success_metric   TEXT NOT NULL,
+    success_threshold REAL NOT NULL,
+    min_sample       INTEGER NOT NULL,
+    max_spend_usd    REAL NOT NULL DEFAULT 0,
+    deadline         TEXT NOT NULL DEFAULT '',
+    status           TEXT NOT NULL DEFAULT 'RUNNING',
+    concluded_at     TEXT DEFAULT '',
+    outcome          TEXT DEFAULT '',
+    outcome_json     TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_experiments_sku ON experiments(sku);
+CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
+
+CREATE TABLE IF NOT EXISTS experiment_arms (
+    experiment_id TEXT NOT NULL,
+    arm           TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    exposures     INTEGER NOT NULL DEFAULT 0,
+    conversions   INTEGER NOT NULL DEFAULT 0,
+    revenue       REAL NOT NULL DEFAULT 0,
+    spend         REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (experiment_id, arm)
 );
 """
 
@@ -468,6 +559,233 @@ class Store:
                 (supplier_id,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # -- published videos --------------------------------------------------
+    def record_published_video(self, *, package_id: str, sku: str,
+                               published_at: str, angle: str = "",
+                               hook_archetype: str = "", fmt: str = "",
+                               cta_variant: str = "", caption_shape: str = "",
+                               runtime_seconds: float = 0.0, url: str = "",
+                               notes: str = "") -> None:
+        """Log a post. Weekday and hour are derived here, once.
+
+        Derived at write time rather than at read time so every later query
+        agrees on them: recomputing from a timestamp in three different places
+        is how a "best posting hour" ends up an hour out in one report.
+        """
+        moment = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO published_videos
+                   (package_id, sku, published_at, weekday, hour, angle,
+                    hook_archetype, format, cta_variant, caption_shape,
+                    runtime_seconds, url, notes)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(package_id) DO UPDATE SET
+                     published_at=excluded.published_at,
+                     weekday=excluded.weekday, hour=excluded.hour,
+                     url=excluded.url, notes=excluded.notes""",
+                (package_id, sku, published_at, moment.weekday(), moment.hour,
+                 angle, hook_archetype, fmt, cta_variant, caption_shape,
+                 runtime_seconds, url, notes),
+            )
+
+    def record_video_metrics(self, *, package_id: str, measured_at: str,
+                             views: int = 0, likes: int = 0, comments: int = 0,
+                             shares: int = 0, saves: int = 0,
+                             avg_watch_pct: float | None = None,
+                             profile_visits: int | None = None,
+                             link_clicks: int | None = None,
+                             data_source: str = "manual") -> None:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT published_at FROM published_videos WHERE package_id=?",
+                (package_id,)).fetchone()
+            if row is None:
+                raise ValueError(
+                    f"No published video {package_id!r}. Metrics for an unposted "
+                    "video would sit unjoinable in the table and quietly skew "
+                    "every average computed over it.")
+            posted = datetime.fromisoformat(row["published_at"].replace("Z", "+00:00"))
+            read = datetime.fromisoformat(measured_at.replace("Z", "+00:00"))
+            hours = round((read - posted).total_seconds() / 3600.0, 2)
+            c.execute(
+                """INSERT INTO video_metrics
+                   (package_id, measured_at, hours_since_post, views, likes,
+                    comments, shares, saves, avg_watch_pct, profile_visits,
+                    link_clicks, data_source)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(package_id, measured_at) DO UPDATE SET
+                     views=excluded.views, likes=excluded.likes,
+                     comments=excluded.comments, shares=excluded.shares,
+                     saves=excluded.saves, avg_watch_pct=excluded.avg_watch_pct,
+                     profile_visits=excluded.profile_visits,
+                     link_clicks=excluded.link_clicks""",
+                (package_id, measured_at, hours, views, likes, comments, shares,
+                 saves, avg_watch_pct, profile_visits, link_clicks, data_source),
+            )
+
+    def published_videos(self, *, sku: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM published_videos"
+        params: tuple = ()
+        if sku:
+            query += " WHERE sku=?"
+            params = (sku,)
+        query += " ORDER BY published_at DESC"
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(query, params)]
+
+    def latest_video_metrics(self, *, min_hours: float = 0.0) -> list[dict[str, Any]]:
+        """The most recent reading per video, joined to its creative attributes.
+
+        Latest rather than first: engagement keeps accruing for days on this
+        platform, so an early reading understates a video that took off late.
+        `min_hours` exists so a caller can exclude posts too fresh to judge.
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT v.*, m.measured_at, m.hours_since_post, m.views, m.likes,
+                          m.comments, m.shares, m.saves, m.avg_watch_pct,
+                          m.profile_visits, m.link_clicks, m.data_source
+                   FROM published_videos v
+                   JOIN video_metrics m ON m.package_id = v.package_id
+                   JOIN (SELECT package_id, MAX(measured_at) AS latest
+                         FROM video_metrics GROUP BY package_id) last
+                     ON last.package_id = m.package_id
+                    AND last.latest = m.measured_at
+                   WHERE m.hours_since_post >= ?
+                   ORDER BY v.published_at DESC""",
+                (min_hours,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # -- storefront funnel -------------------------------------------------
+    def upsert_storefront_daily(self, *, metric_date: str, channel: str,
+                                sessions: int | None = None, orders: int = 0,
+                                revenue: float = 0.0, refunds: float = 0.0,
+                                new_customers: int = 0,
+                                data_source: str = "unknown") -> None:
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO storefront_daily
+                   (metric_date, channel, sessions, orders, revenue, refunds,
+                    new_customers, data_source)
+                   VALUES (?,?,?,?,?,?,?,?)
+                   ON CONFLICT(metric_date, channel) DO UPDATE SET
+                     sessions=excluded.sessions, orders=excluded.orders,
+                     revenue=excluded.revenue, refunds=excluded.refunds,
+                     new_customers=excluded.new_customers,
+                     data_source=excluded.data_source""",
+                (metric_date, channel, sessions, orders, revenue, refunds,
+                 new_customers, data_source),
+            )
+
+    def storefront_range(self, start_date: str, end_date: str,
+                         *, channel: str | None = None) -> list[dict[str, Any]]:
+        query = ("SELECT * FROM storefront_daily "
+                 "WHERE metric_date BETWEEN ? AND ?")
+        params: list[Any] = [start_date, end_date]
+        if channel:
+            query += " AND channel=?"
+            params.append(channel)
+        query += " ORDER BY metric_date, channel"
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(query, params)]
+
+    # -- experiments -------------------------------------------------------
+    def register_experiment(self, *, sku: str, hypothesis: str, variable: str,
+                            success_metric: str, success_threshold: float,
+                            min_sample: int, arms: dict[str, str],
+                            max_spend_usd: float = 0.0,
+                            deadline: str = "") -> str:
+        """Register a test before it runs.
+
+        The threshold and the sample size are written at registration, before
+        any result exists. A criterion chosen after seeing the data is not a
+        criterion, and every product test in this business is small enough that
+        the temptation would be real.
+        """
+        if len(arms) < 2:
+            raise ValueError(
+                "An experiment needs at least two arms. One arm is not a test, "
+                "it is a launch with a hopeful name.")
+        if min_sample <= 0:
+            raise ValueError(
+                "min_sample must be positive — a test with no sample floor "
+                "concludes on its first data point.")
+        experiment_id = f"EXP-{uuid.uuid4().hex[:10]}"
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO experiments
+                   (experiment_id, created_at, sku, hypothesis, variable,
+                    success_metric, success_threshold, min_sample, max_spend_usd,
+                    deadline, status)
+                   VALUES (?,?,?,?,?,?,?,?,?,?, 'RUNNING')""",
+                (experiment_id, now_iso(), sku, hypothesis, variable,
+                 success_metric, success_threshold, min_sample, max_spend_usd,
+                 deadline),
+            )
+            for arm, description in arms.items():
+                c.execute(
+                    "INSERT INTO experiment_arms (experiment_id, arm, description) "
+                    "VALUES (?,?,?)", (experiment_id, arm, description))
+        return experiment_id
+
+    def record_arm_result(self, experiment_id: str, arm: str, *,
+                          exposures: int = 0, conversions: int = 0,
+                          revenue: float = 0.0, spend: float = 0.0) -> None:
+        """Accumulate observations onto an arm."""
+        with self._conn() as c:
+            updated = c.execute(
+                """UPDATE experiment_arms
+                   SET exposures = exposures + ?, conversions = conversions + ?,
+                       revenue = revenue + ?, spend = spend + ?
+                   WHERE experiment_id=? AND arm=?""",
+                (exposures, conversions, revenue, spend, experiment_id, arm),
+            ).rowcount
+        if not updated:
+            raise ValueError(
+                f"No arm {arm!r} on experiment {experiment_id!r}. Recording "
+                "against an unregistered arm would create a result for a test "
+                "nobody designed.")
+
+    def experiment(self, experiment_id: str) -> dict[str, Any] | None:
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM experiments WHERE experiment_id=?",
+                            (experiment_id,)).fetchone()
+            if row is None:
+                return None
+            arms = c.execute(
+                "SELECT * FROM experiment_arms WHERE experiment_id=? ORDER BY arm",
+                (experiment_id,)).fetchall()
+        record = dict(row)
+        record["arms"] = [dict(a) for a in arms]
+        return record
+
+    def experiments(self, *, status: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM experiments"
+        params: tuple = ()
+        if status:
+            query += " WHERE status=?"
+            params = (status,)
+        query += " ORDER BY created_at DESC"
+        with self._conn() as c:
+            ids = [dict(r) for r in c.execute(query, params)]
+        return [self.experiment(e["experiment_id"]) or e for e in ids]
+
+    def conclude_experiment(self, experiment_id: str, *, outcome: str,
+                            detail: dict[str, Any]) -> bool:
+        if outcome not in ("SCALE", "ARCHIVE", "INCONCLUSIVE", "ABANDONED"):
+            raise ValueError(
+                f"Unknown experiment outcome {outcome!r}. Allowed: SCALE, "
+                "ARCHIVE, INCONCLUSIVE, ABANDONED.")
+        with self._conn() as c:
+            changed = c.execute(
+                """UPDATE experiments
+                   SET status='CONCLUDED', concluded_at=?, outcome=?, outcome_json=?
+                   WHERE experiment_id=? AND status='RUNNING'""",
+                (now_iso(), outcome, json.dumps(detail), experiment_id),
+            ).rowcount
+        return bool(changed)
 
 
 def learning_summary(store: Store) -> dict[str, Any]:
