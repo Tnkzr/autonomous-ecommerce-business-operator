@@ -392,3 +392,47 @@ class TestDashboard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTopProductsAggregation(unittest.TestCase):
+    """daily_metrics is one row per day per SKU. Rank products, not days."""
+
+    def _rows(self):
+        return [{"metric_date": "2026-07-28", "channel": "tiktok", "orders": 5,
+                 "revenue": 200.0, "refunds": 0.0, "new_customers": 5,
+                 "sessions": None, "data_source": "live"}]
+
+    def test_the_same_sku_appears_once(self):
+        products = [{"sku": "A", "units": 2, "revenue": 80.0, "net_profit": 30.0,
+                     "data_source": "live"} for _ in range(6)]
+        products.append({"sku": "B", "units": 1, "revenue": 40.0,
+                         "net_profit": 20.0, "data_source": "live"})
+        dashboard = build_dashboard(storefront_rows=self._rows(),
+                                    product_rows=products)
+        panel = next(p for p in dashboard.panels
+                     if p.title == "Top products by profit")
+        skus = [r["SKU"] for r in panel.rows]
+        self.assertEqual(sorted(skus), ["A", "B"])
+        self.assertEqual(len(skus), len(set(skus)))
+
+    def test_totals_are_summed_across_days(self):
+        products = [{"sku": "A", "units": 2, "revenue": 80.0, "net_profit": 30.0,
+                     "data_source": "live"} for _ in range(3)]
+        dashboard = build_dashboard(storefront_rows=self._rows(),
+                                    product_rows=products)
+        panel = next(p for p in dashboard.panels
+                     if p.title == "Top products by profit")
+        self.assertEqual(panel.rows[0]["Units"], 6)
+        self.assertEqual(panel.rows[0]["Net profit"], "$90.00")
+
+    def test_ranking_is_by_total_profit_not_best_day(self):
+        # B has the single best day; A makes more money overall.
+        products = [{"sku": "A", "units": 1, "revenue": 50.0, "net_profit": 20.0,
+                     "data_source": "live"} for _ in range(5)]
+        products.append({"sku": "B", "units": 1, "revenue": 90.0,
+                         "net_profit": 60.0, "data_source": "live"})
+        dashboard = build_dashboard(storefront_rows=self._rows(),
+                                    product_rows=products)
+        panel = next(p for p in dashboard.panels
+                     if p.title == "Top products by profit")
+        self.assertEqual(panel.rows[0]["SKU"], "A")

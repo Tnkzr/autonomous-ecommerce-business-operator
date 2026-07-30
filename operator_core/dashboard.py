@@ -235,9 +235,22 @@ def build_dashboard(*, storefront_rows: list[dict[str, Any]],
             "attributable remainder and understate every channel — including "
             "the one this business runs on.")
 
-    top_products = sorted(product_rows,
-                          key=lambda r: float(r.get("net_profit") or 0.0),
-                          reverse=True)[:5]
+    # Aggregate by SKU first. `daily_metrics` holds one row per day per SKU, so
+    # ranking the raw rows ranks the best *days* of one product and reports the
+    # same SKU five times — a top-products panel that cannot show a second
+    # product is worse than no panel.
+    by_sku: dict[str, dict[str, float]] = {}
+    for row in product_rows:
+        sku = str(row.get("sku", ""))
+        if not sku:
+            continue
+        bucket = by_sku.setdefault(sku, {"units": 0.0, "revenue": 0.0,
+                                         "net_profit": 0.0})
+        bucket["units"] += float(row.get("units") or 0)
+        bucket["revenue"] += float(row.get("revenue") or 0.0)
+        bucket["net_profit"] += float(row.get("net_profit") or 0.0)
+    top_products = [{"sku": sku, **totals} for sku, totals in
+                    sorted(by_sku.items(), key=lambda kv: -kv[1]["net_profit"])[:5]]
     panels.append(Panel(
         title="Top products by profit",
         columns=["SKU", "Units", "Revenue", "Net profit"],

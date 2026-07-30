@@ -75,8 +75,8 @@ class TestStageOrdering(GrowthTestCase):
     def test_all_stages_are_reported_even_when_skipped(self):
         result = self.run_cycle()
         names = [s.name for s in result.stages]
-        self.assertEqual(names, ["research", "screen", "creative", "publishing",
-                                 "measure", "learn"])
+        self.assertEqual(names, ["research", "screen", "listing", "creative",
+                                 "publishing", "measure", "learn"])
 
     def test_skipped_stages_carry_a_reason(self):
         result = self.run_cycle()
@@ -224,3 +224,50 @@ class TestRendering(GrowthTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestListingStage(GrowthTestCase):
+    """The `select → list on Shopify` step. A plan is not a write."""
+
+    def test_a_shopify_product_plan_is_built_for_each_selection(self):
+        result = self.run_cycle(candidates=[passing_candidate()])
+        stage = result.stage("listing")
+        self.assertTrue(stage.ran)
+        plans = stage.payload["plans"]
+        self.assertEqual(len(plans), 1)
+        self.assertEqual(plans[0]["sku"], "GOOD-01")
+
+    def test_the_plan_is_always_a_draft(self):
+        # Creating is only safe to do autonomously because a draft is
+        # invisible and reversible.
+        plan = self.run_cycle(
+            candidates=[passing_candidate()]).stage("listing").payload["plans"][0]
+        self.assertEqual(plan["product"]["status"], "DRAFT")
+
+    def test_the_handle_is_pinned_across_runs(self):
+        # The handle is the product URL. Every video points at it, so a handle
+        # that changes between runs costs every view those videos earned.
+        first = self.run_cycle(candidates=[passing_candidate()],
+                               run_date="2026-08-01")
+        second = self.run_cycle(candidates=[passing_candidate()],
+                                run_date="2026-08-02")
+        self.assertEqual(first.stage("listing").payload["plans"][0]["handle"],
+                         second.stage("listing").payload["plans"][0]["handle"])
+
+    def test_the_plan_carries_price_and_cost(self):
+        plan = self.run_cycle(
+            candidates=[passing_candidate()]).stage("listing").payload["plans"][0]
+        self.assertEqual(plan["variant"]["price"], "24.99")
+        self.assertIn("cost", plan["variant"]["inventoryItem"])
+
+    def test_no_selection_means_no_listing_stage_run(self):
+        stage = self.run_cycle(candidates=[failing_candidate()]).stage("listing")
+        self.assertFalse(stage.ran)
+        self.assertIn("per selected product", stage.skipped_reason)
+
+    def test_handle_appears_in_the_publish_proposal(self):
+        # Approving a publish should show which URL is about to go live.
+        self.run_cycle(candidates=[passing_candidate()])
+        entry = next(d for d in self.store.decisions_for_sku("GOOD-01")
+                     if d["action"] == "publish_product")
+        self.assertIn("handle", entry["inputs_json"])

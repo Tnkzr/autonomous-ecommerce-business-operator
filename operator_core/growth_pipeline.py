@@ -40,8 +40,10 @@ from .learning import learning_report
 from .models import Decision, ProductCandidate, today_iso
 from .production import build_production_package
 from .publishing import build_publishing_plan, cadence_report, recommend_posting_times
+from .listings import generate_listing
 from .research import Opportunity, coverage_report, rank_pipeline
 from .screening import screen_candidate
+from .shopify_listing import build_product_plan
 from .store import Store
 
 
@@ -188,7 +190,33 @@ def run_growth_cycle(
             name="screen", ran=False, summary="No candidates supplied.",
             skipped_reason="Nothing to screen this run."))
 
-    # -- 3. Creative -----------------------------------------------------
+    # -- 3. Listing ------------------------------------------------------
+    # Copy and the Shopify product shape are prepared for every selected
+    # candidate, whether or not credentials exist. A plan is not a write: it is
+    # reviewable, diffable, and costs nothing to produce, which is exactly what
+    # should happen before the irreversible step.
+    plans: list[Any] = []
+    for candidate in selected:
+        draft = generate_listing(candidate, marketplace="shopify")
+        plan = build_product_plan(policy, candidate, draft)
+        plans.append(plan)
+        result.warnings.extend(f"{candidate.sku} listing: {w}"
+                               for w in plan.blockers)
+
+    if selected:
+        ready_plans = [p for p in plans if p.ready]
+        result.stages.append(StageResult(
+            name="listing", ran=True,
+            summary=(f"{len(ready_plans)} of {len(plans)} Shopify product plan(s) "
+                     "ready to create as drafts."),
+            payload={"plans": [p.to_dict() for p in plans]},
+            warnings=[w for p in plans for w in p.warnings]))
+    else:
+        result.stages.append(StageResult(
+            name="listing", ran=False, summary="No products passed screening.",
+            skipped_reason="A listing is built per selected product."))
+
+    # -- 4. Creative -----------------------------------------------------
     packages: list[Any] = []
     creative_summary: list[dict[str, Any]] = []
     for candidate in selected:
@@ -221,7 +249,7 @@ def run_growth_cycle(
             name="creative", ran=False, summary="No products passed screening.",
             skipped_reason="Creative is generated per selected product."))
 
-    # -- 4. Publishing calendar ------------------------------------------
+    # -- 5. Publishing calendar ------------------------------------------
     history = store.published_videos()
     metrics = store.latest_video_metrics()
     timing = recommend_posting_times(metrics)
@@ -244,7 +272,7 @@ def run_growth_cycle(
         warnings=plan.warnings + cadence["warnings"]))
     result.warnings.extend(plan.warnings + cadence["warnings"])
 
-    # -- 5. Measure ------------------------------------------------------
+    # -- 6. Measure ------------------------------------------------------
     start = (today - timedelta(days=lookback_days - 1)).isoformat()
     storefront = store.storefront_range(start, run_date)
     if storefront:
@@ -278,7 +306,7 @@ def run_growth_cycle(
                 "first — a funnel with no orders in it is not a funnel with a "
                 "problem, it is a funnel with no data.")))
 
-    # -- 6. Learn --------------------------------------------------------
+    # -- 7. Learn --------------------------------------------------------
     metric_rows = store.metrics_range(start, run_date)
     learning = learning_report(video_rows=metrics, metric_rows=metric_rows)
     result.stages.append(StageResult(
@@ -289,7 +317,7 @@ def run_growth_cycle(
                        ("No published-video metrics and no product metrics. "
                         "Nothing to learn from yet.")))
 
-    # -- 7. Proposals ----------------------------------------------------
+    # -- 8. Proposals ----------------------------------------------------
     for candidate in selected:
         # Deliberately not gated on having shootable creative. Publishing a
         # listing and finishing a video are independent tasks, and coupling
@@ -298,6 +326,15 @@ def run_growth_cycle(
         # one unwritten line.
         built = [p for p in packages if p.sku == candidate.sku]
         shootable = [p for p in built if p.ready]
+        plan = next((p for p in plans if p.sku == candidate.sku), None)
+        if plan is not None and not plan.ready:
+            # A product plan that cannot be created cannot be published. Skip
+            # the proposal rather than asking for approval on something that
+            # would fail at the first call.
+            result.warnings.append(
+                f"{candidate.sku}: no publish proposal — the Shopify product "
+                f"plan is blocked ({'; '.join(plan.blockers)}).")
+            continue
         authorisation = risk.authorise(
             policy=policy, action_type="publish_listing", amount_usd=0.0,
             is_new_sku=True,
@@ -317,6 +354,8 @@ def run_growth_cycle(
             decision=authorisation.decision, inputs={
                 "packages_built": len(built),
                 "packages_shootable": len(shootable),
+                "handle": plan.handle if plan else "",
+                "price": candidate.target_price,
                 "authorisation": authorisation.explain(),
             },
             expected="Product live and receiving traffic from scheduled videos.",

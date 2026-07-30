@@ -82,6 +82,7 @@ Six standing objectives:
 | Opportunity pipeline and source coverage | `research.py`, `[research]` |
 | Analytics dashboard (terminal + HTML) | `dashboard.py` |
 | Shopify orders → daily funnel table | `storefront.py` |
+| Candidate → Shopify draft product | `shopify_listing.py` |
 
 A charter clause that is not enforced somewhere in that table is an aspiration,
 not a rule. If you add one, add the code and the test with it.
@@ -261,13 +262,11 @@ shape cannot pass against a client that checks none of them.
 ## Testing
 
 ```
-python3 -m unittest tests.test_operator tests.test_amazon \
-    tests.test_charter tests.test_tiktok tests.test_growth \
-    tests.test_tiktok_import tests.test_shopify tests.test_creative \
-    tests.test_growth_engine tests.test_intelligence tests.test_growth_pipeline \
-    tests.test_simulation
+python3 -m unittest discover -s tests -p "test_*.py"
 ```
-629 tests, must stay green.
+669 tests, must stay green. Discovery rather than an explicit module list: a
+list has to be edited when a suite is added, and the one that gets forgotten is
+the one that stops running.
 
 A test that silently stops testing is worse than one that fails: assertions
 that mutate config or fixtures must verify the mutation actually applied.

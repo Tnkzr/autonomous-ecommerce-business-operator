@@ -1206,12 +1206,65 @@ def _candidate_or_exit(sku: str):
     return candidate
 
 
+def cmd_shopify_product(args, policy, store) -> int:
+    """Show the Shopify draft product that would be created for a SKU."""
+    import json as _json
+
+    from .listings import generate_listing
+    from .shopify_listing import build_product_plan, publish_plan
+
+    candidate = _candidate_or_exit(args.sku)
+    if candidate is None:
+        return 2
+    draft = generate_listing(candidate, marketplace="shopify")
+    plan = build_product_plan(policy, candidate, draft,
+                              compare_at_price=args.compare_at or None)
+
+    print(f"\nSHOPIFY DRAFT PRODUCT — {plan.sku}")
+    print(f"  handle:  {plan.handle}   (this is the product URL; it is pinned)")
+    print(f"  status:  {plan.product_input['status']}")
+    print(f"  title:   {plan.product_input['title']}")
+    seo = plan.product_input["seo"]
+    print(f"  seo title ({len(seo['title'])}/60):       {seo['title']}")
+    print(f"  seo description ({len(seo['description'])}/160): {seo['description']}")
+    print(f"  tags:    {', '.join(plan.product_input['tags'][:10])}")
+    print(f"  variant: {_json.dumps(plan.variant_input)}")
+
+    if args.body:
+        print("\n  BODY HTML")
+        print(plan.product_input["descriptionHtml"])
+
+    for warning in plan.warnings:
+        print(f"\n  ! {warning}")
+    for blocker in plan.blockers:
+        print(f"\n  BLOCKED: {blocker}")
+
+    if not args.create:
+        print("\n  Nothing was created. This is the plan only — re-run with "
+              "--create to make it a DRAFT product in Shopify.")
+        return 0 if plan.ready else 1
+
+    if not plan.ready:
+        print("\n  Refusing to create: the plan is blocked.", file=sys.stderr)
+        return 1
+
+    from connectors.shopify import ShopifyConnector
+    connector = ShopifyConnector(allow_writes=True)
+    created = publish_plan(connector, plan)
+    print(f"\n  Created DRAFT product {created['product_id']} "
+          f"at /products/{created['handle']}")
+    print("  It is invisible to customers until published, which needs "
+          "approval. Nothing is live yet.")
+    return 0
+
+
 def cmd_shopify_sync(args, policy, store) -> int:
     """Pull Shopify orders into the daily funnel table."""
     from connectors.shopify import ShopifyConnector
     from .storefront import sync_from_connector
 
-    result = sync_from_connector(store, ShopifyConnector(), days=args.days)
+    result = sync_from_connector(store, ShopifyConnector(), days=args.days,
+                                 policy=policy)
     print(f"\nSynced {result.orders_counted} of {result.orders_seen} order(s) "
           f"across {result.days_written} day(s).")
     print(f"  channels: {', '.join(result.channels) or 'none'}")
@@ -1734,6 +1787,17 @@ def main(argv: list[str] | None = None) -> int:
         "shopify-sync", help="pull Shopify orders into the funnel table")
     p_ssync.add_argument("--days", type=int, default=30)
 
+    p_sprod = sub.add_parser(
+        "shopify-product",
+        help="show (or create) the Shopify draft product for a SKU")
+    p_sprod.add_argument("sku")
+    p_sprod.add_argument("--body", action="store_true", help="print the body HTML")
+    p_sprod.add_argument("--compare-at", type=float, default=0.0,
+                         dest="compare_at",
+                         help="compare-at price; must exceed the sale price")
+    p_sprod.add_argument("--create", action="store_true",
+                         help="actually create it as a DRAFT (needs credentials)")
+
     p_creative = sub.add_parser(
         "creative", help="10 video ideas, hooks, captions and CTAs for one product")
     p_creative.add_argument("sku")
@@ -1855,7 +1919,8 @@ def main(argv: list[str] | None = None) -> int:
         "tiktok-settlements": cmd_tiktok_settlements,
         "tiktok-trends": cmd_tiktok_trends, "tiktok-report": cmd_tiktok_report,
         "shopify-verify": cmd_shopify_verify,
-        "shopify-sync": cmd_shopify_sync, "creative": cmd_creative,
+        "shopify-sync": cmd_shopify_sync,
+        "shopify-product": cmd_shopify_product, "creative": cmd_creative,
         "produce": cmd_produce, "publish-log": cmd_publish_log,
         "video-metrics": cmd_video_metrics, "calendar": cmd_calendar,
         "funnel": cmd_funnel, "experiment": cmd_experiment, "learn": cmd_learn,

@@ -160,8 +160,127 @@ def sync_orders(store: Store, orders: list[Any], *,
         unattributed_share_pct=share, warnings=warnings)
 
 
+def sync_line_items(store: Store, orders: list[Any], policy: Any, *,
+                    data_source: str = "live",
+                    marketplace: str = "shopify") -> SyncResult:
+    """Aggregate order line items into per-SKU `daily_metrics`.
+
+    The companion to `sync_orders`: that one answers "how did the store do",
+    this one answers "which product made the money". They are separate tables
+    because they answer to different denominators — a two-SKU order is one
+    order and two product rows, and forcing both through one table makes every
+    per-product rate wrong by the basket size.
+
+    Cost of goods comes from the variant's `unitCost`, which Shopify only holds
+    if the operator filled in "cost per item". Where it is missing, `cogs` and
+    `net_profit` are left at zero and the SKU is named in the warnings — a
+    guessed cost produces a confident margin, and a confident margin on a
+    guessed cost is how a loss-making product gets scaled.
+    """
+    fees_cfg = _fee_schedule(policy, marketplace)
+    buckets: dict[tuple[str, str], dict[str, float]] = defaultdict(
+        lambda: {"units": 0.0, "revenue": 0.0, "cogs": 0.0, "fees": 0.0,
+                 "refunds": 0.0})
+    costed: set[str] = set()
+    uncosted: set[str] = set()
+    counted = excluded = 0
+
+    for order in orders:
+        day = _day_of(getattr(order, "created_at", ""))
+        if not day or getattr(order, "cancelled", False):
+            excluded += 1
+            continue
+        if str(getattr(order, "financial_status", "") or "").upper() \
+                in NON_REVENUE_STATUSES:
+            excluded += 1
+            continue
+
+        lines = getattr(order, "line_items", None) or []
+        order_refund = float(getattr(order, "refunded", 0.0) or 0.0)
+        order_revenue = sum(float(li.get("revenue") or 0.0) for li in lines)
+
+        for line in lines:
+            sku = str(line.get("sku") or "").strip()
+            if not sku:
+                # An unmapped line cannot be attributed to a product. Counting
+                # it under a blank SKU would create a phantom best-seller.
+                excluded += 1
+                continue
+            units = int(line.get("quantity") or 0)
+            revenue = float(line.get("revenue") or 0.0)
+            unit_cost = line.get("unit_cost")
+
+            bucket = buckets[(day, sku)]
+            bucket["units"] += units
+            bucket["revenue"] += revenue
+            bucket["fees"] += _estimate_fees(revenue, units, fees_cfg)
+            # Refunds are apportioned by the line's share of the order, since
+            # Shopify's refund total is per order, not per line.
+            if order_refund and order_revenue > 0:
+                bucket["refunds"] += order_refund * (revenue / order_revenue)
+            if unit_cost is None:
+                uncosted.add(sku)
+            else:
+                costed.add(sku)
+                bucket["cogs"] += float(unit_cost) * units
+            counted += 1
+
+    for (day, sku), totals in sorted(buckets.items()):
+        has_cost = sku in costed and sku not in uncosted
+        net = (totals["revenue"] - totals["cogs"] - totals["fees"]
+               - totals["refunds"]) if has_cost else 0.0
+        store.upsert_daily_metric(
+            metric_date=day, marketplace=marketplace, sku=sku,
+            units=int(totals["units"]), revenue=round(totals["revenue"], 2),
+            cogs=round(totals["cogs"], 2), fees=round(totals["fees"], 2),
+            ad_spend=0.0, refunds=round(totals["refunds"], 2),
+            net_profit=round(net, 2), data_source=data_source)
+
+    warnings: list[str] = []
+    if uncosted:
+        names = ", ".join(sorted(uncosted)[:8])
+        warnings.append(
+            f"{len(uncosted)} SKU(s) have no cost per item set in Shopify "
+            f"({names}). Their profit is recorded as 0 rather than estimated — "
+            "a guessed cost produces a confident margin, and a confident margin "
+            "on a guessed cost is how a loss-making product gets scaled. Set "
+            "cost per item on the variant.")
+    warnings.append(
+        "Fees are estimated from [fees." + marketplace + "] in policy.toml, not "
+        "read from payouts. Reconcile them against a real payout before "
+        "trusting per-product profit.")
+
+    return SyncResult(
+        days_written=len({day for day, _s in buckets}),
+        orders_seen=len(orders), orders_counted=counted,
+        orders_excluded=excluded,
+        channels=sorted({sku for _d, sku in buckets}),
+        unattributed_share_pct=None, warnings=warnings)
+
+
+def _fee_schedule(policy: Any, marketplace: str) -> dict[str, float]:
+    fees = (getattr(policy, "raw", {}) or {}).get("fees", {})
+    return {k: float(v) for k, v in (fees.get(marketplace) or {}).items()
+            if isinstance(v, (int, float))}
+
+
+def _estimate_fees(revenue: float, units: int, cfg: dict[str, float]) -> float:
+    """Marketplace fees on one line, from the policy schedule.
+
+    An estimate and labelled as one. `[fees.*]` values drive every profit
+    number in the system and are unverified until reconciled against a real
+    payout — see the note in CLAUDE.md before changing them.
+    """
+    referral = revenue * cfg.get("referral_pct", 0.0) / 100.0
+    payment = revenue * cfg.get("payment_pct", 0.0) / 100.0
+    payment += cfg.get("payment_flat", 0.0) * (1 if revenue else 0)
+    fulfilment = cfg.get("fulfillment_flat", 0.0) * max(units, 0)
+    return round(referral + payment + fulfilment, 2)
+
+
 def sync_from_connector(store: Store, connector: Any, *, days: int = 30,
-                        today: date | None = None) -> SyncResult:
+                        today: date | None = None,
+                        policy: Any = None) -> SyncResult:
     """Fetch recent orders from Shopify and write the funnel table.
 
     The window is deliberately re-fetched rather than incremental: refunds and
@@ -172,9 +291,21 @@ def sync_from_connector(store: Store, connector: Any, *, days: int = 30,
     today = today or datetime.now(timezone.utc).date()
     since = (today - timedelta(days=days - 1)).isoformat()
     envelope = connector.fetch_orders(since=since)
-    result = sync_orders(store, envelope.payload,
-                         data_source=source_of(envelope))
+    source = source_of(envelope)
+    result = sync_orders(store, envelope.payload, data_source=source)
     result.warnings.extend(envelope.warnings)
+    if policy is not None:
+        # Per-SKU rows too, when a policy is available to price the fees. Both
+        # come from the same fetch so the channel table and the product table
+        # can never describe different days.
+        per_sku = sync_line_items(store, envelope.payload, policy,
+                                  data_source=source)
+        result.warnings.extend(per_sku.warnings)
+    else:
+        result.warnings.append(
+            "Per-SKU profit was not written: no policy was supplied, so fees "
+            "could not be priced. Revenue by channel is available; profit by "
+            "product is not.")
     return result
 
 

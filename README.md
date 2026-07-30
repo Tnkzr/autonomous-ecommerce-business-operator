@@ -72,11 +72,7 @@ python3 -m operator_core.cli capital                  # allocation, concentratio
 python3 -m operator_core.cli approvals                # what needs your sign-off
 python3 -m operator_core.cli approve <id> --by "Your Name"
 python3 -m operator_core.cli outcome <id> --met true --note "sold through in 38d"
-python3 -m unittest tests.test_operator tests.test_amazon \
-    tests.test_charter tests.test_tiktok tests.test_growth \
-    tests.test_tiktok_import tests.test_shopify tests.test_creative \
-    tests.test_growth_engine tests.test_intelligence \
-    tests.test_growth_pipeline tests.test_simulation  # 629 tests
+python3 -m unittest discover -s tests -p "test_*.py"   # 669 tests
 ```
 
 ### The growth loop
@@ -88,6 +84,8 @@ python3 -m operator_core.cli creative SEED-PETBRUSH-03    # 10 ideas/hooks/capti
 python3 -m operator_core.cli produce SEED-PETBRUSH-03     # call sheet, SRT, thumbnails
 python3 -m operator_core.cli shopify-verify           # token AND scope check
 python3 -m operator_core.cli shopify-sync --days 30   # orders → funnel table
+python3 -m operator_core.cli shopify-product SEED-PETBRUSH-03  # preview the draft product
+python3 -m operator_core.cli shopify-product SEED-PETBRUSH-03 --create
 
 # after posting a video, and after reading its numbers in the app
 python3 -m operator_core.cli publish-log <package-id> --sku SEED-PETBRUSH-03 \
@@ -171,6 +169,8 @@ python3 -m operator_core.cli tiktok-report                 # daily optimisation
 | `learning.py` | What the history supports concluding, and what it does not. |
 | `research.py` | Opportunity pipeline, per-source provenance, coverage reporting. |
 | `dashboard.py` | Terminal and self-contained HTML dashboard. |
+| `storefront.py` | Shopify orders → the daily funnel and per-SKU profit tables. |
+| `shopify_listing.py` | Candidate + listing copy → a Shopify draft product. |
 | `connectors/credentials.py` | Provider-agnostic credential resolution. A new provider is a spec. |
 | `connectors/amazon/` | SP-API: auth → transport → client → connector. |
 | `connectors/tiktok/` | TikTok Shop: signing → auth → transport → client → connector + CSV import. |
