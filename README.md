@@ -1,21 +1,43 @@
 # Autonomous Ecommerce Business Operator
 
-A decision engine for running a **TikTok-Shop-first** ecommerce operation, with
-Amazon implemented and Shopify, Walmart, and eBay plugging into the same
-interfaces.
+A decision engine for an ecommerce content business: **organic TikTok video
+drives traffic to a Shopify store**. TikTok Shop, Amazon, Walmart and eBay plug
+into the same marketplace interfaces.
+
+The loop it runs:
+
+```
+research → score → select → list on Shopify → make videos → publish
+        → measure → learn → repeat
+```
 
 It screens products, scores suppliers, prepares negotiations, calculates unit
-economics, drafts listings, reprices against competitors, plans inventory,
-optimises advertising, monitors reviews, and produces a daily report — with
-every rule from the operating policy enforced in code and every decision
-journaled so the system can be measured over time.
+economics, drafts listings and Shopify products, generates ten creative angles
+with shootable production packages, schedules publishing, diagnoses where the
+funnel leaks, runs product tests that are allowed to fail, and reports what the
+history actually supports concluding — with every rule from the operating
+policy enforced in code and every decision journaled so the system can be
+measured over time.
+
+Because acquisition is organic, the cost of a customer is a shoot day rather
+than a bid. There is no CAC to optimise down, so profit per order comes from
+order value, repeat purchase and refund rate — and reach comes from hit rate
+across many angles, not from spend.
 
 ---
 
 ## Read this first
 
-**Amazon SP-API** (`connectors/amazon/`) and **TikTok Shop** (`connectors/tiktok/`)
-are fully implemented. Shopify, Walmart, and eBay are still declarations.
+**Amazon SP-API** (`connectors/amazon/`), **TikTok Shop**
+(`connectors/tiktok/`), and **Shopify Admin GraphQL** (`connectors/shopify/`)
+are fully implemented. Walmart and eBay are still declarations.
+
+Shopify is the one that needs no eligibility review: a custom app in your own
+store issues a permanent Admin API token in about two minutes. TikTok Shop Open
+API registration is gated on seller eligibility; while it is blocked, the
+operator runs on Seller Center CSV exports (`tiktok-import`), which are real
+data moved by hand and are tracked with provenance `import` — distinct from both
+`live` and `seed`.
 
 **No marketplace is connected in this checkout.** This repository contains the
 operator; it does not contain your business. Until credentials exist it runs in
@@ -51,8 +73,39 @@ python3 -m operator_core.cli approvals                # what needs your sign-off
 python3 -m operator_core.cli approve <id> --by "Your Name"
 python3 -m operator_core.cli outcome <id> --met true --note "sold through in 38d"
 python3 -m unittest tests.test_operator tests.test_amazon \
-    tests.test_charter tests.test_tiktok \
-    tests.test_growth                          # 336 tests
+    tests.test_charter tests.test_tiktok tests.test_growth \
+    tests.test_tiktok_import tests.test_shopify tests.test_creative \
+    tests.test_growth_engine tests.test_intelligence \
+    tests.test_growth_pipeline                        # 611 tests
+```
+
+### The growth loop
+
+```bash
+python3 -m operator_core.cli growth                   # run the whole loop once
+python3 -m operator_core.cli research                 # which signal feeds exist
+python3 -m operator_core.cli creative SEED-PETBRUSH-03    # 10 ideas/hooks/captions/CTAs
+python3 -m operator_core.cli produce SEED-PETBRUSH-03     # call sheet, SRT, thumbnails
+python3 -m operator_core.cli shopify-verify           # token AND scope check
+
+# after posting a video, and after reading its numbers in the app
+python3 -m operator_core.cli publish-log <package-id> --sku SEED-PETBRUSH-03 \
+    --at 2026-08-01T19:00:00+00:00 --angle problem_solution --cta passive
+python3 -m operator_core.cli video-metrics <package-id> \
+    --views 41000 --likes 3100 --shares 480 --clicks 620 --watch-pct 48
+
+python3 -m operator_core.cli calendar                 # posting times, cadence
+python3 -m operator_core.cli funnel                   # where the funnel leaks
+python3 -m operator_core.cli learn                    # what the history supports
+python3 -m operator_core.cli dashboard                # everything, one screen
+python3 -m operator_core.cli dashboard --html reports/dashboard.html
+
+# tests that are allowed to fail
+python3 -m operator_core.cli experiment register --sku SEED-PETBRUSH-03 \
+    --hypothesis "Demo beats problem-callout" --variable angle \
+    --metric click_rate --threshold 0.015 --baseline 0.012 \
+    --arm "demo=satisfying demo" --arm "problem=problem callout"
+python3 -m operator_core.cli experiment evaluate --experiment EXP-... --conclude
 ```
 
 ### Amazon commands (require live credentials)
@@ -108,8 +161,19 @@ python3 -m operator_core.cli tiktok-report                 # daily optimisation
 | `scoring.py` | Twelve-dimension product scorecard with coverage. |
 | `content.py` | Hooks, scripts, shot lists, creators, content calendar. |
 | `weekly.py` | Weekly business review and self-derived engineering backlog. |
+| `growth_pipeline.py` | **The content-to-cash loop.** Research → screen → creative → publish → measure → learn. |
+| `creative.py` | Ten creative angles, hook bank, captions, CTA variants, originality screen. |
+| `production.py` | Storyboards, computed timecodes, SRT, thumbnails, export metadata. |
+| `publishing.py` | Publishing calendar, posting times from own data, cadence, engagement. |
+| `conversion.py` | Funnel diagnosis, AOV, bundles, upsells, refund analysis. |
+| `experiments.py` | Sample sizing, arm comparison, scale/archive/inconclusive verdicts. |
+| `learning.py` | What the history supports concluding, and what it does not. |
+| `research.py` | Opportunity pipeline, per-source provenance, coverage reporting. |
+| `dashboard.py` | Terminal and self-contained HTML dashboard. |
+| `connectors/credentials.py` | Provider-agnostic credential resolution. A new provider is a spec. |
 | `connectors/amazon/` | SP-API: auth → transport → client → connector. |
-| `connectors/tiktok/` | TikTok Shop: signing → auth → transport → client → connector. |
+| `connectors/tiktok/` | TikTok Shop: signing → auth → transport → client → connector + CSV import. |
+| `connectors/shopify/` | Admin GraphQL: credentials → transport → queries → client → connector. |
 | `connectors/` | Other marketplace adapters. Fail loudly when unconfigured. |
 
 ## The policy file is the constitution
@@ -450,8 +514,10 @@ so when the sample is too small to mean anything.
 
 - Run reads first on both marketplaces, reconcile a day's orders against Seller
   Central and Seller Center by hand, and only then consider enabling writes.
-- Advertising is not implemented on either marketplace. Amazon needs the Ads
-  API and TikTok needs the Marketing API; both are separate applications.
+- Advertising is not implemented on any marketplace. Amazon needs the Ads API
+  and TikTok needs the Marketing API; both are separate applications. The
+  business model here is organic, so this is a gap rather than a blocker — but
+  it means no spend-to-revenue join exists.
 - **Neither integration has executed against a live account.** Every path is
   covered by offline tests against scripted responses, but scripted responses
   are not the real API.
@@ -463,9 +529,37 @@ so when the sample is too small to mean anything.
   understates every customer's value and caps what the business will pay to
   acquire one; it is deliberate, because an invented repeat rate funds
   unprofitable acquisition.
-- Seven of nine market signal sources have no connector. Confidence scores are
-  computed from 30% of the intended evidence base and should be read as
-  provisional.
+- Ten of twelve market signal sources have no connector. Confidence scores are
+  computed from 30% of the intended weighted evidence base and should be read
+  as provisional. `research` prints the current figure and what each missing
+  source would need.
+- **TikTok publishes no organic-analytics API.** Views, watch time and link
+  clicks for the shop's own posts are typed in from the app (`video-metrics`)
+  and stored as `data_source='manual'` — a reading at a point in time, not a
+  feed. Nothing in `learning.py` will conclude without them, and it says so
+  rather than filling the gap.
+- **Shopify's Admin API does not expose session counts.** Conversion rate and
+  revenue-per-visitor are reported as unknown rather than back-computed from
+  orders. A conversion rate built on a guessed denominator is the most
+  confidently wrong number a store can produce.
+- Shopify has no competitor pricing and no native reviews. Both calls raise
+  with the reason; scraping rival storefronts is a ToS breach with legal
+  exposure, and an empty list would read as "no competitors".
+- There is no built-in "best time to post" table and there will not be one.
+  Every published one is a different audience in a different timezone.
+  `calendar` reads this account's own history or says it cannot yet — which
+  needs about fifteen mature posts concentrated on a few slots.
+- The trend-participation creative angle cannot be generated, only templated.
+  Trending sounds and formats have no API and Creative Center scraping breaches
+  ToS, so the slot stays unfilled for a human who can open the app.
+- Content packages routinely come back not-shootable, by design. The generated
+  voiceover leaves the product-specific line unwritten because the operator has
+  not held the product; that line is a blocker rather than a warning, because
+  the alternative is a shoot day where somebody improvises the sentence
+  carrying the claim.
+- Experiment sizing assumes a normal approximation to two proportions. At these
+  sample sizes the effects are large or not worth having; do not read the
+  interval width as precision.
 - The tax model is a flat planning rate, not a tax engine. It does not handle
   nexus, quarterly estimates, depreciation, or entity structure. It exists so
   decisions are made on after-tax numbers, not to file anything.

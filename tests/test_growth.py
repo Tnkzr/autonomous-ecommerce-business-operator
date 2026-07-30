@@ -424,13 +424,22 @@ class TestMarketplaceNotImplemented(unittest.TestCase):
 
         from connectors import MarketplaceNotImplemented, get_connector
 
-        with mock.patch.dict(os.environ, {"SHOPIFY_STORE_DOMAIN": "x",
-                                          "SHOPIFY_ADMIN_ACCESS_TOKEN": "y"}):
+        with mock.patch.dict(os.environ, {"WALMART_CLIENT_ID": "x",
+                                          "WALMART_CLIENT_SECRET": "y"}):
             with self.assertRaises(MarketplaceNotImplemented) as ctx:
-                get_connector("shopify").fetch_orders(since="2026-01-01")
+                get_connector("walmart").fetch_orders(since="2026-01-01")
         message = str(ctx.exception)
         self.assertIn("no live implementation", message)
         self.assertIn("Endpoints to implement", message)
+
+    def test_registry_hands_out_the_real_shopify_connector(self):
+        # A registry carrying its own stub of an implemented connector will
+        # eventually hand one out, and the caller gets "not implemented" for
+        # something that works.
+        from connectors import get_connector
+        from connectors.shopify import ShopifyConnector
+
+        self.assertIsInstance(get_connector("shopify"), ShopifyConnector)
 
     def test_it_is_still_a_notimplementederror(self):
         # Existing handlers must keep working.

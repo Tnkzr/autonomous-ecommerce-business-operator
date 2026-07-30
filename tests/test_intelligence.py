@@ -296,7 +296,14 @@ class TestDashboard(unittest.TestCase):
     def test_worst_provenance_sets_the_banner(self):
         self.assertEqual(_worst_provenance(["live", "seed", "live"]), "seed")
         self.assertEqual(_worst_provenance(["live", "import"]), "import")
-        self.assertEqual(_worst_provenance([]), "unknown")
+
+    def test_no_inputs_is_its_own_state_not_unverified(self):
+        # "nothing was synced" and "an input failed to declare itself" need
+        # different responses; conflating them sends someone hunting a bug.
+        self.assertEqual(_worst_provenance([]), "none")
+        dashboard = build_dashboard(storefront_rows=[])
+        self.assertIn("NO DATA", dashboard.banner)
+        self.assertIn("not because the business produced zero", dashboard.banner)
 
     def test_seed_data_banner_cannot_be_absent(self):
         dashboard = build_dashboard(storefront_rows=self._rows(data_source="seed"))

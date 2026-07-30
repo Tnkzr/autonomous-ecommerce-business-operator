@@ -260,6 +260,8 @@ class Transport:
             try:
                 bucket.update_limit(float(reported))
             except ValueError:
+                # A malformed rate-limit header is not worth failing a good
+                # response over. Keep the documented default and carry on.
                 pass
 
     def _backoff(self, attempt: int, *, retry_after: str | None = None) -> None:
@@ -268,6 +270,9 @@ class Transport:
                 self._sleep(float(retry_after))
                 return
             except ValueError:
+                # Retry-After can be an HTTP-date rather than seconds. Fall
+                # through to exponential backoff rather than failing the call
+                # over an unparseable header.
                 pass
         # Exponential with a ceiling. No jitter needed for a single-tenant job.
         self._sleep(min(2.0 ** attempt, 30.0))

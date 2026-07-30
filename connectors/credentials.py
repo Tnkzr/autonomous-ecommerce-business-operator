@@ -209,6 +209,9 @@ class FileCredentials(CredentialSource):
         try:
             self.path.chmod(0o600)
         except OSError:  # pragma: no cover - platform dependent
+            # Windows and some network filesystems reject chmod. Tightening
+            # permissions is best-effort; failing to write the rotated token
+            # because we could not also restrict it would be the worse outcome.
             pass
         return True
 

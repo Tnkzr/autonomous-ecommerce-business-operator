@@ -388,6 +388,9 @@ class Transport:
                 self._sleep(float(retry_after))
                 return
             except ValueError:
+                # Retry-After can be an HTTP-date rather than seconds. Fall
+                # through to exponential backoff rather than failing the call
+                # over an unparseable header.
                 pass
         self._sleep(min(2.0 ** attempt, MAX_BACKOFF_SECONDS))
 

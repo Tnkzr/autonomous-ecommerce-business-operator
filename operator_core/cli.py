@@ -1188,6 +1188,402 @@ def cmd_journal(args, policy, store) -> int:
     return 0
 
 
+
+# ---------------------------------------------------------------------------
+# Growth loop: research -> creative -> publish -> measure -> learn
+# ---------------------------------------------------------------------------
+def _candidate_or_exit(sku: str):
+    """Look up a candidate, or explain what is available.
+
+    Returns None rather than raising so the caller can exit with a status code;
+    a traceback is the wrong way to say "that SKU is not in the file".
+    """
+    candidate = next((c for c in load_candidates() if c.sku == sku), None)
+    if candidate is None:
+        available = ", ".join(c.sku for c in load_candidates()) or "(none loaded)"
+        print(f"No candidate with SKU {sku!r}. Available: {available}",
+              file=sys.stderr)
+    return candidate
+
+
+def cmd_shopify_verify(args, policy, store) -> int:
+    from connectors.shopify import ShopifyConnector
+
+    result = ShopifyConnector().verify_connection()
+    print(f"\nShopify: {'OK' if result['ok'] else 'NOT READY'}")
+    print(f"  {result['detail']}")
+    print(f"  credential source: {result.get('credential_source', 'unknown')}")
+    for key in ("shop", "domain", "currency", "timezone", "plan", "api_version"):
+        if result.get(key):
+            print(f"  {key}: {result[key]}")
+    for warning in result.get("warnings", []):
+        print(f"  ! {warning}")
+    if result.get("remedy"):
+        print(f"\n{result['remedy']}")
+    return 0 if result["ok"] else 2
+
+
+def cmd_creative(args, policy, store) -> int:
+    from .creative import build_creative_bank
+
+    candidate = _candidate_or_exit(args.sku)
+    if candidate is None:
+        return 2
+    bank = build_creative_bank(
+        candidate, live_trend=args.trend or None,
+        true_story=args.story or None, seasonal_window=args.occasion or None)
+
+    print(f"\nCREATIVE BANK — {bank.title} ({bank.sku})")
+    coverage = bank.coverage()
+    print(f"  {coverage['ideas_ready_to_shoot']} of {coverage['ideas_generated']} "
+          f"ideas shootable · {coverage['angles_available']} of "
+          f"{coverage['angles_available'] + coverage['angles_blocked']} angles available")
+
+    print("\n  IDEAS")
+    for idea in bank.ideas:
+        state = "ready" if idea.ready_to_shoot else "needs input"
+        print(f"    [{state:>11}] {idea.angle_name}: {idea.premise[:70]}")
+        for slot in idea.unfilled_slots:
+            print(f"                  FILL: {slot}")
+
+    print("\n  HOOKS")
+    for hook in bank.hooks:
+        print(f"    - {hook['line']}")
+
+    print("\n  CAPTIONS")
+    for caption in bank.captions:
+        print(f"    [{caption['shape']:>14}] {caption['text']}")
+
+    print("\n  CTA VARIANTS")
+    for cta in bank.ctas:
+        print(f"    [{cta['variant']:>15}] {cta['line']}")
+
+    if bank.blocked_angles:
+        print("\n  ANGLES UNAVAILABLE")
+        for blocked in bank.blocked_angles:
+            print(f"    {blocked['name']}: {blocked['reason']}")
+
+    for warning in bank.warnings:
+        print(f"\n  ! {warning}")
+    return 0
+
+
+def cmd_produce(args, policy, store) -> int:
+    from .content import build_content_plan
+    from .creative import build_creative_bank
+    from .production import build_production_package
+
+    candidate = _candidate_or_exit(args.sku)
+    if candidate is None:
+        return 2
+    bank = build_creative_bank(candidate)
+    plan = build_content_plan(policy, candidate, unit_margin=args.margin)
+    if not plan.concepts:
+        print("No concepts could be built from this product's own attributes.")
+        return 1
+
+    index = max(0, min(args.index, len(plan.concepts) - 1))
+    idea = bank.ideas[index] if index < len(bank.ideas) else None
+    package = build_production_package(
+        concept=plan.concepts[index], idea=idea, title=candidate.title,
+        hashtags=bank.hashtags)
+
+    print()
+    print(package.call_sheet())
+    print("SUBTITLES (.srt)")
+    print(package.srt() or "  (no spoken audio in this cut)")
+    print("THUMBNAIL DIRECTIONS")
+    for thumb in package.thumbnail_ideas:
+        print(f"  - {thumb['concept']}: {thumb['direction']}")
+        print(f"    why: {thumb['why']}")
+    print("\nMUSIC")
+    for key, value in package.music.items():
+        print(f"  {key}: {value}")
+    print("\nEXPORT")
+    for key, value in package.export_metadata.items():
+        if key not in ("safe_area_px", "hashtags"):
+            print(f"  {key}: {value}")
+    if package.warnings:
+        print("\nWARNINGS")
+        for warning in package.warnings:
+            print(f"  ! {warning}")
+    return 0 if package.ready else 1
+
+
+def cmd_publish_log(args, policy, store) -> int:
+    store.record_published_video(
+        package_id=args.package, sku=args.sku, published_at=args.at,
+        angle=args.angle, hook_archetype=args.hook, fmt=args.format,
+        cta_variant=args.cta, runtime_seconds=args.runtime, url=args.url)
+    print(f"Logged {args.package} for {args.sku}, published {args.at}.")
+    print("  Record its performance later with `video-metrics`. Until then it "
+          "counts toward cadence but contributes nothing to learning.")
+    return 0
+
+
+def cmd_video_metrics(args, policy, store) -> int:
+    from datetime import datetime, timezone
+
+    measured = args.at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        store.record_video_metrics(
+            package_id=args.package, measured_at=measured, views=args.views,
+            likes=args.likes, comments=args.comments, shares=args.shares,
+            saves=args.saves, avg_watch_pct=args.watch_pct,
+            profile_visits=args.profile_visits, link_clicks=args.clicks,
+            data_source="manual")
+    except ValueError as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 2
+    print(f"Recorded metrics for {args.package} as at {measured}.")
+    print("  Source is 'manual' — TikTok publishes no organic analytics API, so "
+          "this is a reading from the app, not a feed.")
+    return 0
+
+
+def cmd_calendar(args, policy, store) -> int:
+    from .publishing import cadence_report, channel_summary, recommend_posting_times
+
+    history = store.published_videos()
+    metrics = store.latest_video_metrics()
+
+    print("\nPOSTING TIMES")
+    timing = recommend_posting_times(metrics)
+    if timing["confident"]:
+        for rec in timing["recommendations"]:
+            delta = rec["vs_account_median_pct"]
+            suffix = f" ({delta:+.0f}% vs account median)" if delta is not None else ""
+            print(f"  {rec['weekday']} {rec['hour']} — median "
+                  f"{rec['median_views']:,.0f} views over {rec['posts']} posts{suffix}")
+    print(f"  {timing['note']}")
+
+    print("\nCADENCE")
+    cadence = cadence_report(history, days=args.days)
+    print(f"  {cadence['posts']} posts over {cadence['window_days']} days "
+          f"({cadence['posts_per_day']}/day), longest silence "
+          f"{cadence['longest_gap_days']} days")
+    for warning in cadence["warnings"]:
+        print(f"  ! {warning}")
+
+    print("\nCHANNEL")
+    summary = channel_summary(metrics)
+    for key in ("videos_published", "videos_judgeable", "total_views",
+                "median_views", "mean_engagement_rate_pct", "mean_click_rate_pct"):
+        print(f"  {key}: {summary[key]}")
+    print(f"  {summary['note']}")
+    return 0
+
+
+def cmd_funnel(args, policy, store) -> int:
+    from datetime import date, timedelta
+
+    from .conversion import aggregate_funnel, diagnose_funnel
+
+    end = date.fromisoformat(args.until) if args.until else date.today()
+    start = end - timedelta(days=args.days - 1)
+    rows = store.storefront_range(start.isoformat(), end.isoformat())
+    if not rows:
+        print(f"No storefront data between {start} and {end}.")
+        print("  A funnel with no data in it is not a funnel with a problem. "
+              "Sync Shopify orders first.")
+        return 1
+
+    metrics = aggregate_funnel(period=f"{start}..{end}", channel=args.channel,
+                               storefront_rows=rows,
+                               video_rows=store.latest_video_metrics())
+    diagnosis = diagnose_funnel(metrics, policy)
+
+    print(f"\nFUNNEL — {metrics.channel}, {start} to {end}")
+    for key, value in metrics.to_dict().items():
+        if key in ("period", "channel"):
+            continue
+        print(f"  {key}: {'unknown' if value is None else value}")
+
+    print(f"\n  Leak stage: {diagnosis.leak_stage or 'none — no stage below benchmark'}")
+    if diagnosis.leak_stage:
+        from .conversion import STAGE_MEANING
+        print(f"  {STAGE_MEANING[diagnosis.leak_stage]}")
+
+    if diagnosis.recommendations:
+        print("\n  RECOMMENDATIONS")
+        for rec in diagnosis.recommendations:
+            confidence = "" if rec.confident else "  [LOW CONFIDENCE]"
+            print(f"    [{rec.priority}] {rec.action}{confidence}")
+            print(f"        why: {rec.rationale}")
+            print(f"        expect: {rec.expected_effect}")
+            print(f"        basis: {rec.sample_basis}")
+
+    for gap in diagnosis.unmeasurable:
+        print(f"\n  UNMEASURED: {gap}")
+    for warning in diagnosis.warnings:
+        print(f"\n  ! {warning}")
+    return 0
+
+
+def cmd_experiment(args, policy, store) -> int:
+    from .experiments import evaluate, portfolio_view, required_sample_per_arm
+
+    if args.action == "register":
+        cfg = policy.raw.get("experiments", {})
+        if args.min_sample:
+            min_sample = args.min_sample
+        else:
+            min_sample = required_sample_per_arm(
+                baseline_rate=args.baseline,
+                minimum_detectable_effect=float(cfg.get("minimum_detectable_effect", 0.3)),
+                power=float(cfg.get("power", 0.8)))
+            print(f"Sample floor computed from a {args.baseline:.1%} baseline and "
+                  f"a {float(cfg.get('minimum_detectable_effect', 0.3)):.0%} "
+                  f"detectable effect: {min_sample:,} per arm.")
+        arms = dict(pair.split("=", 1) for pair in args.arm)
+        experiment_id = store.register_experiment(
+            sku=args.sku, hypothesis=args.hypothesis, variable=args.variable,
+            success_metric=args.metric, success_threshold=args.threshold,
+            min_sample=min_sample, arms=arms,
+            max_spend_usd=float(cfg.get("max_spend_per_test_usd", 0.0)),
+            deadline=args.deadline or "")
+        print(f"Registered {experiment_id}.")
+        print("  The threshold and sample floor are now fixed. A criterion "
+              "chosen after seeing the result is not a criterion.")
+        return 0
+
+    if args.action == "record":
+        store.record_arm_result(args.experiment, args.arm_name,
+                                exposures=args.exposures,
+                                conversions=args.conversions,
+                                revenue=args.revenue, spend=args.spend)
+        print(f"Recorded against {args.experiment}/{args.arm_name}.")
+        return 0
+
+    if args.action == "evaluate":
+        record = store.experiment(args.experiment)
+        if record is None:
+            print(f"No experiment {args.experiment}.", file=sys.stderr)
+            return 2
+        result = evaluate(record, policy)
+        print(f"\n{result.experiment_id} — {result.hypothesis}")
+        print(f"  VERDICT: {result.verdict}")
+        for arm in result.arms:
+            rate = f"{arm.rate:.2%}" if arm.rate is not None else "n/a"
+            print(f"    {arm.arm}: {arm.conversions}/{arm.exposures} = {rate} "
+                  f"· contribution ${arm.contribution:,.2f}")
+        if result.confidence_interval:
+            lo, hi = result.confidence_interval
+            print(f"  95% interval on the difference: {lo:+.2%} to {hi:+.2%}")
+        for reason in result.reasons:
+            print(f"  {reason}")
+        for warning in result.warnings:
+            print(f"  ! {warning}")
+        if args.conclude and result.verdict in ("SCALE", "ARCHIVE"):
+            store.conclude_experiment(args.experiment, outcome=result.verdict,
+                                      detail=result.to_dict())
+            print(f"  Concluded as {result.verdict}.")
+        return 0
+
+    running = store.experiments()
+    evaluations = [evaluate(r, policy) for r in running]
+    view = portfolio_view(evaluations)
+    print("\nEXPERIMENT PORTFOLIO")
+    for key, value in view.items():
+        print(f"  {key}: {value}")
+    return 0
+
+
+def cmd_learn(args, policy, store) -> int:
+    from datetime import date, timedelta
+
+    from .learning import learning_report
+
+    end = date.today()
+    start = end - timedelta(days=args.days - 1)
+    report = learning_report(
+        video_rows=store.latest_video_metrics(),
+        metric_rows=store.metrics_range(start.isoformat(), end.isoformat()))
+
+    print("\nWHAT THE HISTORY SUPPORTS")
+    print(f"  {report['headline']}")
+    print(f"  {report['actionable_findings']} actionable · "
+          f"{report['directional_findings']} directional · "
+          f"{report['insufficient']} insufficient")
+    for name, finding in report["findings"].items():
+        print(f"\n  [{finding['verdict']}] {name}")
+        if finding["leader"]:
+            print(f"    leader: {finding['leader']}")
+        print(f"    {finding['reason']}")
+        for group in finding["groups"][:5]:
+            print(f"      {group['group']}: median {group['median']:,.3f} "
+                  f"over {group['observations']} obs (spread {group['spread']:,.3f})")
+    print(f"\n  {report['note']}")
+    return 0
+
+
+def cmd_research(args, policy, store) -> int:
+    from .research import coverage_report
+
+    report = coverage_report()
+    print("\nRESEARCH COVERAGE")
+    print(f"  {report['sources_connected']} of {report['sources_total']} sources "
+          f"connected ({report['connected_pct']}%)")
+    print("\n  CONNECTED")
+    for entry in report["connected"]:
+        print(f"    {entry['source']}: {entry['connector']}")
+    print("\n  NOT CONNECTED")
+    for entry in report["missing"]:
+        print(f"    {entry['source']}")
+        print(f"      would need: {entry['would_need']}")
+    print(f"\n  {report['note']}")
+    return 0
+
+
+def cmd_dashboard(args, policy, store) -> int:
+    from datetime import date, timedelta
+    from pathlib import Path
+
+    from .dashboard import build_dashboard, render_html, render_terminal
+
+    end = date.fromisoformat(args.until) if args.until else date.today()
+    start = end - timedelta(days=args.days - 1)
+    previous_start = start - timedelta(days=args.days)
+
+    dashboard = build_dashboard(
+        storefront_rows=store.storefront_range(start.isoformat(), end.isoformat()),
+        previous_rows=store.storefront_range(previous_start.isoformat(),
+                                             (start - timedelta(days=1)).isoformat()),
+        video_rows=store.latest_video_metrics(),
+        product_rows=store.metrics_range(start.isoformat(), end.isoformat()),
+        experiments=store.experiments(),
+        pending_approvals=store.pending_approvals(),
+        period=f"{start} to {end}", today=end)
+
+    if args.html:
+        destination = Path(args.html)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(render_html(dashboard), encoding="utf-8")
+        print(f"Wrote {destination}")
+        return 0
+
+    print(render_terminal(dashboard))
+    return 0
+
+
+def cmd_growth(args, policy, store) -> int:
+    from .growth_pipeline import render_growth_run, run_growth_cycle
+
+    known = {c.sku: c for c in load_candidates()}
+    if args.sku:
+        candidates = [known[s] for s in args.sku if s in known]
+        unknown = [s for s in args.sku if s not in known]
+        if unknown:
+            print(f"Unknown SKU(s): {', '.join(unknown)}", file=sys.stderr)
+            return 2
+    else:
+        candidates = list(known.values())
+    result = run_growth_cycle(policy, store, candidates=candidates,
+                              lookback_days=args.days)
+    print(render_growth_run(result))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="operator", description="Autonomous ecommerce operator")
     ap.add_argument("--policy", help="path to policy.toml")
@@ -1312,6 +1708,102 @@ def main(argv: list[str] | None = None) -> int:
     p_j = sub.add_parser("journal", help="show the decision journal")
     p_j.add_argument("--limit", type=int, default=25)
 
+
+    # -- growth loop ------------------------------------------------------
+    sub.add_parser("shopify-verify", help="verify the Shopify Admin API connection")
+
+    p_creative = sub.add_parser(
+        "creative", help="10 video ideas, hooks, captions and CTAs for one product")
+    p_creative.add_argument("sku")
+    p_creative.add_argument("--trend", default="",
+                            help="a trend you verified in the app (unlocks the trend angle)")
+    p_creative.add_argument("--story", default="",
+                            help="a real customer story (unlocks the storytelling angle)")
+    p_creative.add_argument("--occasion", default="",
+                            help="recipient and occasion (unlocks the gift angle)")
+
+    p_produce = sub.add_parser(
+        "produce", help="full production package: call sheet, SRT, thumbnails, export")
+    p_produce.add_argument("sku")
+    p_produce.add_argument("--index", type=int, default=0, help="which concept")
+    p_produce.add_argument("--margin", type=float, default=0.0,
+                           help="unit margin, for creator commission ceilings")
+
+    p_plog = sub.add_parser("publish-log", help="log a video that was posted")
+    p_plog.add_argument("package")
+    p_plog.add_argument("--sku", required=True)
+    p_plog.add_argument("--at", required=True, help="ISO timestamp of the post")
+    p_plog.add_argument("--angle", default="")
+    p_plog.add_argument("--hook", default="")
+    p_plog.add_argument("--format", default="")
+    p_plog.add_argument("--cta", default="")
+    p_plog.add_argument("--runtime", type=float, default=0.0)
+    p_plog.add_argument("--url", default="")
+
+    p_vm = sub.add_parser(
+        "video-metrics",
+        help="record a video's performance, read from the TikTok app")
+    p_vm.add_argument("package")
+    p_vm.add_argument("--at", default="", help="when the reading was taken")
+    p_vm.add_argument("--views", type=int, default=0)
+    p_vm.add_argument("--likes", type=int, default=0)
+    p_vm.add_argument("--comments", type=int, default=0)
+    p_vm.add_argument("--shares", type=int, default=0)
+    p_vm.add_argument("--saves", type=int, default=0)
+    p_vm.add_argument("--watch-pct", type=float, default=None,
+                      dest="watch_pct", help="average watch percentage")
+    p_vm.add_argument("--profile-visits", type=int, default=None,
+                      dest="profile_visits")
+    p_vm.add_argument("--clicks", type=int, default=None, help="link clicks")
+
+    p_cal = sub.add_parser("calendar", help="posting times, cadence, channel health")
+    p_cal.add_argument("--days", type=int, default=28)
+
+    p_funnel = sub.add_parser("funnel", help="diagnose where the funnel leaks")
+    p_funnel.add_argument("--days", type=int, default=28)
+    p_funnel.add_argument("--until", default="")
+    p_funnel.add_argument("--channel", default="tiktok")
+
+    p_exp = sub.add_parser("experiment", help="register, record, and judge tests")
+    p_exp.add_argument("action", choices=["register", "record", "evaluate", "list"],
+                       nargs="?", default="list")
+    p_exp.add_argument("--experiment", default="", help="experiment id")
+    p_exp.add_argument("--sku", default="")
+    p_exp.add_argument("--hypothesis", default="")
+    p_exp.add_argument("--variable", default="")
+    p_exp.add_argument("--metric", default="conversion_rate")
+    p_exp.add_argument("--threshold", type=float, default=0.02)
+    p_exp.add_argument("--baseline", type=float, default=0.02,
+                       help="current rate as a proportion, for sample sizing")
+    p_exp.add_argument("--min-sample", type=int, default=0, dest="min_sample",
+                       help="override the computed sample floor")
+    p_exp.add_argument("--arm", action="append", default=[],
+                       help="name=description, repeatable")
+    p_exp.add_argument("--arm-name", default="", dest="arm_name")
+    p_exp.add_argument("--exposures", type=int, default=0)
+    p_exp.add_argument("--conversions", type=int, default=0)
+    p_exp.add_argument("--revenue", type=float, default=0.0)
+    p_exp.add_argument("--spend", type=float, default=0.0)
+    p_exp.add_argument("--deadline", default="")
+    p_exp.add_argument("--conclude", action="store_true",
+                       help="write the verdict back if it is decisive")
+
+    p_learn = sub.add_parser("learn", help="what the history actually supports")
+    p_learn.add_argument("--days", type=int, default=90)
+
+    sub.add_parser("research", help="which signal sources are connected")
+
+    p_dash = sub.add_parser("dashboard", help="the whole business on one screen")
+    p_dash.add_argument("--days", type=int, default=28)
+    p_dash.add_argument("--until", default="")
+    p_dash.add_argument("--html", default="", help="write an HTML file instead")
+
+    p_growth = sub.add_parser(
+        "growth", help="run the full content-to-cash loop once")
+    p_growth.add_argument("--sku", action="append", default=[],
+                          help="limit to these SKUs, repeatable")
+    p_growth.add_argument("--days", type=int, default=28)
+
     args = ap.parse_args(argv)
 
     if getattr(args, "since", None) == "":
@@ -1340,6 +1832,11 @@ def main(argv: list[str] | None = None) -> int:
         "tiktok-orders": cmd_tiktok_orders,
         "tiktok-settlements": cmd_tiktok_settlements,
         "tiktok-trends": cmd_tiktok_trends, "tiktok-report": cmd_tiktok_report,
+        "shopify-verify": cmd_shopify_verify, "creative": cmd_creative,
+        "produce": cmd_produce, "publish-log": cmd_publish_log,
+        "video-metrics": cmd_video_metrics, "calendar": cmd_calendar,
+        "funnel": cmd_funnel, "experiment": cmd_experiment, "learn": cmd_learn,
+        "research": cmd_research, "dashboard": cmd_dashboard, "growth": cmd_growth,
     }
     try:
         return handlers[args.cmd](args, policy, store)

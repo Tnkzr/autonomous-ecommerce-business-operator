@@ -27,13 +27,20 @@ from typing import Any
 
 # Provenance ranked worst-first. The banner reports the weakest input, because
 # a dashboard is only as real as its least real number.
-PROVENANCE_RANK = {"seed": 0, "unknown": 1, "import": 2, "cached": 3, "live": 4}
+PROVENANCE_RANK = {"none": -1, "seed": 0, "unknown": 1, "import": 2,
+                   "cached": 3, "live": 4}
 
 PROVENANCE_BANNER = {
     "seed": ("NOT REAL BUSINESS NUMBERS — at least one figure below comes from "
              "seed data. Nothing here describes an actual business."),
     "unknown": ("PROVENANCE UNKNOWN — at least one input did not declare where "
                 "it came from. Treat every figure as unverified."),
+    # Distinct from "unknown": there is nothing here at all, which is a
+    # different problem with a different fix. Saying an input failed to declare
+    # itself when there were no inputs sends someone looking for a bug.
+    "none": ("NO DATA — nothing was recorded for this period. Every figure "
+             "below is empty because nothing has been synced, not because the "
+             "business produced zero."),
     "import": ("IMPORTED DATA — figures come from Seller Center exports rather "
                "than a live API. Real, but as of the export date, not now."),
     "cached": ("CACHED DATA — figures were read from a cache, not fetched. "
@@ -102,9 +109,13 @@ class Dashboard:
 
 
 def _worst_provenance(sources: list[str]) -> str:
-    """The weakest input decides the banner."""
+    """The weakest input decides the banner.
+
+    No inputs at all is its own state, not the weakest input — an empty
+    dashboard and an unverified one need different responses.
+    """
     if not sources:
-        return "unknown"
+        return "none"
     return min((s if s in PROVENANCE_RANK else "unknown" for s in sources),
                key=lambda s: PROVENANCE_RANK[s])
 

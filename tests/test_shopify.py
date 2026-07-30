@@ -625,3 +625,27 @@ class TestCredentialSources(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStatusReporting(unittest.TestCase):
+    def test_status_names_environment_variables_not_internal_fields(self):
+        # A status command that reports `shop_domain` makes you read the source
+        # to discover you set SHOPIFY_SHOP_DOMAIN.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            status = ShopifyConnector().status()
+        self.assertIn("SHOPIFY_SHOP_DOMAIN", status["missing_env"])
+        self.assertIn("SHOPIFY_ADMIN_ACCESS_TOKEN", status["missing_env"])
+        self.assertNotIn("shop_domain", status["missing_env"])
+
+    def test_configured_connector_reports_nothing_missing(self):
+        conn = ShopifyConnector(credentials=StaticCredentials(CREDS))
+        self.assertTrue(conn.status()["configured"])
+        self.assertEqual(conn.status()["missing_env"], [])
+
+    def test_file_configured_connector_is_not_reported_unconfigured(self):
+        # base.missing_credentials used to read os.environ directly, so a
+        # connector configured from a file reported itself unconfigured while
+        # working perfectly.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            conn = ShopifyConnector(credentials=StaticCredentials(CREDS))
+            self.assertTrue(conn.configured)

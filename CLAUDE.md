@@ -5,10 +5,24 @@ accounts suspended. Work accordingly.
 
 ## Charter
 
-**TikTok Shop is the primary marketplace** (`meta.primary_marketplace`).
-Engines default to its fee model, settlement lag, and policy rules. Other
-marketplaces plug into the same interfaces — adding one must never require
-changing business logic.
+**The business is organic TikTok content driving traffic to a Shopify store.**
+TikTok is the acquisition channel; Shopify is where the sale happens and where
+the margin lives. TikTok Shop remains the primary *marketplace*
+(`meta.primary_marketplace`) — engines default to its fee model, settlement lag,
+and policy rules — but the loop the business runs on is:
+
+```
+research → score → select → list on Shopify → make videos → publish
+        → measure → learn → repeat
+```
+
+`growth_pipeline.run_growth_cycle` is that loop. Every other marketplace plugs
+into the same interfaces; adding one must never require changing business logic.
+
+Because acquisition is organic, **the cost of a customer is a shoot day, not a
+bid**. That changes which levers matter: there is no CAC to optimise down, so
+profit per order comes from AOV, repeat purchase, and refund rate — and reach
+comes from hit rate across many angles, not from spend.
 
 You are an autonomous ecommerce operating system. The objective is to maximise
 **long-term after-tax profit** while protecting capital, marketplace accounts,
@@ -57,6 +71,16 @@ Six standing objectives:
 | TikTok daily loop | `tiktok_pipeline.py` |
 | TikTok store health | `account_health.assess_tiktok`, `[tiktok_health]` |
 | Manual signal capture | `signals.MANUALLY_OBSERVABLE`, `store.record_signal` |
+| Content-to-cash loop | `growth_pipeline.run_growth_cycle` |
+| Shopify storefront | `connectors/shopify/`, `[shopify]` |
+| Ten creative angles, hooks, captions, CTAs | `creative.py` |
+| Storyboards, timings, SRT, export metadata | `production.py` |
+| Publishing calendar, posting times, cadence | `publishing.py`, `[publishing]` |
+| Funnel diagnosis, AOV, bundles, upsells | `conversion.py`, `[conversion]` |
+| Product tests, scale/archive decisions | `experiments.py`, `[experiments]` |
+| What the history supports concluding | `learning.py` |
+| Opportunity pipeline and source coverage | `research.py`, `[research]` |
+| Analytics dashboard (terminal + HTML) | `dashboard.py` |
 
 A charter clause that is not enforced somewhere in that table is an aspiration,
 not a rule. If you add one, add the code and the test with it.
@@ -85,6 +109,32 @@ not a rule. If you add one, add the code and the test with it.
 - **Signals a human observed in-app are logged as `origin='manual'`.** Sources
   with a real API may not be typed in — a recollection and a reading must stay
   distinguishable.
+- **Draft is free, publishing is not.** Shopify products are created `DRAFT`,
+  which is invisible and reversible, so creating one needs no approval. Moving
+  to `ACTIVE` is the irreversible step and is the only one gated by
+  `risk.authorise()`. Unpublishing is deliberately ungated: requiring sign-off
+  to take a listing down is how a compliance problem stays live overnight.
+- **Never report a ranking without a verdict.** `learning.py` returns
+  SUPPORTED / DIRECTIONAL / INSUFFICIENT alongside every comparison. With six
+  angles and twenty videos one angle always looks best; a leader that has not
+  separated from the within-group spread is not a finding, and acting on one is
+  how a rotating cast of "best performers" gets reported every week.
+- **A test must be able to fail.** Success criteria and sample floors are
+  registered before a test runs (`store.register_experiment`). A threshold
+  chosen after seeing the data is a rationalisation. Scaling additionally
+  requires contribution per exposure: an arm can beat its sibling and lose
+  money.
+- **Locate the leak before recommending a fix.** The funnel is sequential, so
+  `conversion.locate_leak` returns the *earliest* failing stage, not the worst.
+  Recommending a landing-page change to fix a hook is the most common wasted
+  month in ecommerce.
+- **No borrowed benchmarks.** There is no built-in "best time to post" table
+  and there will not be one — every published one is someone else's audience in
+  someone else's timezone. `publishing.recommend_posting_times` reads our own
+  history or says it cannot yet.
+- **Rates need denominators.** Conversion rate is `None` when sessions are
+  unknown, never back-computed from orders. Engagement rates are omitted below
+  the view floor rather than computed on a video nobody saw.
 
 ### What this system cannot currently see
 
@@ -98,7 +148,21 @@ creator adoption have no public API at all; scraping the Creative Center
 breaches TikTok's ToS and risks the shop. `signals.py` declares all of them,
 reports each unconnected one with what it would take to wire it, and scores
 only what actually reported. Coverage is surfaced on every assessment; run
-`capital` to see the current number.
+`capital` or `research` to see the current number.
+
+Three more blind spots worth stating in the same breath:
+
+- **Organic video analytics.** TikTok publishes no API for a shop's own organic
+  post performance. Views, watch time and link clicks are typed in from the app
+  via `video-metrics` and stored with `data_source='manual'` — a reading at a
+  point in time, not a feed. `learning.py` will not conclude without them.
+- **Storefront sessions.** The Shopify Admin API does not expose session
+  counts, so conversion rate and revenue-per-visitor are `None` rather than
+  back-computed from orders. A conversion rate built on a guessed denominator
+  is the most confidently wrong number a store can produce.
+- **Competitor prices and reviews.** Neither is in the Shopify Admin API, and
+  scraping rival storefronts is a ToS breach with legal exposure. Those calls
+  raise; an empty list would read as "no competitors", which is never true.
 
 Do not substitute your own impressions of what is trending for a data feed.
 A confident guess about demand is the most expensive kind of fabrication here,
@@ -131,8 +195,12 @@ because it survives into a purchase order.
   zero-install is a feature for an operator that must run anywhere.
 - Money: `models.money()` at output boundaries. Floats are acceptable for
   per-unit decision math, not for settlement reconciliation.
-- New engine → add to `pipeline.run_daily`, journal its decisions with a
-  `dedupe_key` so re-runs stay idempotent, and surface it in `reporting`.
+- New engine → add it to the loop it belongs to (`pipeline.run_daily` for the
+  marketplace cycle, `growth_pipeline.run_growth_cycle` for the content cycle),
+  journal its decisions with a `dedupe_key` so re-runs stay idempotent, and
+  surface it in `reporting` or `dashboard`.
+- A stage that cannot run reports that it did not run, with the reason. "We did
+  not look" and "we looked and found nothing" must never render the same.
 - Comments explain *why*, especially where a rule looks arbitrary (cooldown
   windows, minimum click thresholds, the 0.5 unsellable-return factor).
 
@@ -163,13 +231,41 @@ Two things there will bite anyone who forgets them:
 Signature changes must keep `tests.test_tiktok.TestSigning` passing — its
 vector is computed by hand, not captured from the implementation.
 
+Shopify is in `connectors/shopify/`, same layering, GraphQL only — Shopify
+marked the REST product endpoints legacy and building new work on them buys a
+rewrite. Credentials for all three providers come from
+`connectors/credentials.py`: a provider contributes a `CredentialSpec`, and no
+connector reads `os.environ` itself. Three things here will bite:
+
+- **Shopify has three failure layers, and all three are HTTP 200 for two of
+  them.** The status; `errors[]` for a rejected query; and
+  `data.<mutation>.userErrors[]` for a mutation that ran and was refused by
+  business rules. The third arrives with no top-level errors and `data`
+  populated — code that checks the first two reports "Shopify refused to create
+  your product" as success. Every mutation in `client.py` passes
+  `mutation_field` so the check cannot be skipped by omission.
+- **Rate limiting is cost-based.** Every response carries the live bucket in
+  `extensions.cost.throttleStatus` and `CostLimiter.adopt` takes it. The
+  defaults are a first-request starting point, never a seller's real plan
+  limits. A `THROTTLED` error waits arithmetic, not `2^n` — the response says
+  how many points are missing and how fast they restore.
+- **Every list query must paginate to exhaustion.** A truncated product list
+  feeds a "we have no listing for this SKU" decision that then creates a
+  duplicate. `hasNextPage` with no cursor raises rather than looping.
+
+Shopify tests use `ShopifySender` with `sh_ok`, `sh_error`, `sh_user_error` and
+`sh_http` — one helper per failure layer, so a suite built only on the happy
+shape cannot pass against a client that checks none of them.
+
 ## Testing
 
 ```
 python3 -m unittest tests.test_operator tests.test_amazon \
-    tests.test_charter tests.test_tiktok tests.test_growth
+    tests.test_charter tests.test_tiktok tests.test_growth \
+    tests.test_tiktok_import tests.test_shopify tests.test_creative \
+    tests.test_growth_engine tests.test_intelligence tests.test_growth_pipeline
 ```
-336 tests, must stay green.
+611 tests, must stay green.
 
 A test that silently stops testing is worse than one that fails: assertions
 that mutate config or fixtures must verify the mutation actually applied.

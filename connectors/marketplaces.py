@@ -1,10 +1,15 @@
 """Connector registry.
 
-Amazon (`connectors.amazon`) and TikTok Shop (`connectors.tiktok`) are fully
-implemented. Shopify, Walmart, and eBay are still declarations: they name the
-exact credentials their real API needs, so `operator status` reports precisely
-what to provision, and their reads fail loudly rather than fabricating data.
-Each documents the endpoints to implement and the gotcha that matters most.
+Amazon (`connectors.amazon`), TikTok Shop (`connectors.tiktok`) and Shopify
+(`connectors.shopify`) are fully implemented and are imported here rather than
+redeclared — a registry that carries its own stub of an implemented connector
+will eventually hand one out, and the caller gets a "not implemented" error for
+something that works.
+
+Walmart and eBay are still declarations: they name the exact credentials their
+real API needs, so `operator status` reports precisely what to provision, and
+their reads fail loudly rather than fabricating data. Each documents the
+endpoints to implement and the gotcha that matters most.
 """
 
 from __future__ import annotations
@@ -12,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from .amazon import AmazonConnector
+from .shopify import ShopifyConnector
 from .tiktok import TikTokShopConnector
 from .base import DataEnvelope, MarketplaceConnector, MarketplaceNotImplemented
 
@@ -44,21 +50,6 @@ class _UnimplementedReads(MarketplaceConnector):
 
     def fetch_ad_performance(self, *, since: str) -> DataEnvelope:
         return self._reads("fetch_ad_performance")
-
-
-class ShopifyConnector(_UnimplementedReads):
-    """Shopify Admin GraphQL API (2024-10+).
-
-    Endpoints: orders, productVariants, inventoryLevels, publications.
-
-    Gotcha: the GraphQL API is cost-throttled, not request-throttled. Ask for
-    fewer fields to buy more calls. REST is deprecated for new work.
-    """
-
-    name = "shopify"
-    endpoints = "orders, productVariants, inventoryLevels, publications"
-    required_env = ("SHOPIFY_STORE_DOMAIN", "SHOPIFY_ADMIN_ACCESS_TOKEN")
-    docs_url = "https://shopify.dev/docs/api/admin-graphql"
 
 
 class WalmartConnector(_UnimplementedReads):

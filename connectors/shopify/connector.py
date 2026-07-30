@@ -731,7 +731,10 @@ class ShopifyConnector(MarketplaceConnector):
             "marketplace": self.name,
             "configured": cred.available,
             "credential_source": cred.source_name,
-            "missing_env": cred.missing_fields,
+            # Environment variable names, not internal field names. A status
+            # command that reports `shop_domain` makes you go read the source
+            # to find out that you set SHOPIFY_SHOP_DOMAIN.
+            "missing_env": self.missing_credentials(),
             "writes_allowed": self.allow_writes,
             "docs": self.docs_url,
             "remedy": cred.remedy,
