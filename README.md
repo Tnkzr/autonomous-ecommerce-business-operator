@@ -76,7 +76,7 @@ python3 -m unittest tests.test_operator tests.test_amazon \
     tests.test_charter tests.test_tiktok tests.test_growth \
     tests.test_tiktok_import tests.test_shopify tests.test_creative \
     tests.test_growth_engine tests.test_intelligence \
-    tests.test_growth_pipeline                        # 611 tests
+    tests.test_growth_pipeline tests.test_simulation  # 629 tests
 ```
 
 ### The growth loop
@@ -87,6 +87,7 @@ python3 -m operator_core.cli research                 # which signal feeds exist
 python3 -m operator_core.cli creative SEED-PETBRUSH-03    # 10 ideas/hooks/captions/CTAs
 python3 -m operator_core.cli produce SEED-PETBRUSH-03     # call sheet, SRT, thumbnails
 python3 -m operator_core.cli shopify-verify           # token AND scope check
+python3 -m operator_core.cli shopify-sync --days 30   # orders → funnel table
 
 # after posting a video, and after reading its numbers in the app
 python3 -m operator_core.cli publish-log <package-id> --sku SEED-PETBRUSH-03 \

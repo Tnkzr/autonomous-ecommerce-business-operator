@@ -81,6 +81,7 @@ Six standing objectives:
 | What the history supports concluding | `learning.py` |
 | Opportunity pipeline and source coverage | `research.py`, `[research]` |
 | Analytics dashboard (terminal + HTML) | `dashboard.py` |
+| Shopify orders → daily funnel table | `storefront.py` |
 
 A charter clause that is not enforced somewhere in that table is an aspiration,
 not a rule. If you add one, add the code and the test with it.
@@ -263,9 +264,10 @@ shape cannot pass against a client that checks none of them.
 python3 -m unittest tests.test_operator tests.test_amazon \
     tests.test_charter tests.test_tiktok tests.test_growth \
     tests.test_tiktok_import tests.test_shopify tests.test_creative \
-    tests.test_growth_engine tests.test_intelligence tests.test_growth_pipeline
+    tests.test_growth_engine tests.test_intelligence tests.test_growth_pipeline \
+    tests.test_simulation
 ```
-611 tests, must stay green.
+629 tests, must stay green.
 
 A test that silently stops testing is worse than one that fails: assertions
 that mutate config or fixtures must verify the mutation actually applied.

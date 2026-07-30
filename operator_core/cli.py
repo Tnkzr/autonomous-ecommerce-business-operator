@@ -1206,6 +1206,24 @@ def _candidate_or_exit(sku: str):
     return candidate
 
 
+def cmd_shopify_sync(args, policy, store) -> int:
+    """Pull Shopify orders into the daily funnel table."""
+    from connectors.shopify import ShopifyConnector
+    from .storefront import sync_from_connector
+
+    result = sync_from_connector(store, ShopifyConnector(), days=args.days)
+    print(f"\nSynced {result.orders_counted} of {result.orders_seen} order(s) "
+          f"across {result.days_written} day(s).")
+    print(f"  channels: {', '.join(result.channels) or 'none'}")
+    if result.unattributed_share_pct is not None:
+        print(f"  unattributed: {result.unattributed_share_pct}%")
+    for warning in result.warnings:
+        print(f"  ! {warning}")
+    print("\n  Sessions are left unset — the Admin API does not expose them, so "
+          "conversion rate stays unknown rather than being back-computed.")
+    return 0
+
+
 def cmd_shopify_verify(args, policy, store) -> int:
     from connectors.shopify import ShopifyConnector
 
@@ -1712,6 +1730,10 @@ def main(argv: list[str] | None = None) -> int:
     # -- growth loop ------------------------------------------------------
     sub.add_parser("shopify-verify", help="verify the Shopify Admin API connection")
 
+    p_ssync = sub.add_parser(
+        "shopify-sync", help="pull Shopify orders into the funnel table")
+    p_ssync.add_argument("--days", type=int, default=30)
+
     p_creative = sub.add_parser(
         "creative", help="10 video ideas, hooks, captions and CTAs for one product")
     p_creative.add_argument("sku")
@@ -1832,7 +1854,8 @@ def main(argv: list[str] | None = None) -> int:
         "tiktok-orders": cmd_tiktok_orders,
         "tiktok-settlements": cmd_tiktok_settlements,
         "tiktok-trends": cmd_tiktok_trends, "tiktok-report": cmd_tiktok_report,
-        "shopify-verify": cmd_shopify_verify, "creative": cmd_creative,
+        "shopify-verify": cmd_shopify_verify,
+        "shopify-sync": cmd_shopify_sync, "creative": cmd_creative,
         "produce": cmd_produce, "publish-log": cmd_publish_log,
         "video-metrics": cmd_video_metrics, "calendar": cmd_calendar,
         "funnel": cmd_funnel, "experiment": cmd_experiment, "learn": cmd_learn,
