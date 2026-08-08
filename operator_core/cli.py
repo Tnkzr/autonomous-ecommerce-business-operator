@@ -1206,6 +1206,83 @@ def _candidate_or_exit(sku: str):
     return candidate
 
 
+# ---------------------------------------------------------------------------
+# eBay
+# ---------------------------------------------------------------------------
+def cmd_ebay_verify(args, policy, store) -> int:
+    from connectors.ebay import EbayConnector
+
+    result = EbayConnector().verify_connection()
+    print(f"\neBay: {'OK' if result['ok'] else 'NOT READY'}")
+    print(f"  {result['detail']}")
+    print(f"  credential source: {result.get('credential_source', 'unknown')}")
+    for key in ("environment", "marketplace_id", "seller", "standards_level",
+                "defect_rate_pct", "late_shipment_rate_pct"):
+        if result.get(key) is not None and result.get(key) != "":
+            print(f"  {key}: {result[key]}")
+    for warning in result.get("warnings", []):
+        print(f"  ! {warning}")
+    if result.get("remedy"):
+        print(f"\n{result['remedy']}")
+    return 0 if result["ok"] else 2
+
+
+def cmd_ebay_sync(args, policy, store) -> int:
+    """Pull eBay orders into the funnel and per-SKU tables."""
+    from datetime import date, timedelta
+
+    from connectors.ebay import EbayConnector
+    from .storefront import sync_ebay_orders
+
+    since = args.since or (date.today() - timedelta(days=args.days - 1)).isoformat()
+    envelope = EbayConnector().fetch_orders(since=since)
+    result = sync_ebay_orders(store, envelope.payload, policy,
+                              data_source=str(envelope.source))
+    print(f"\nSynced {result.orders_counted} of {result.orders_seen} order(s) "
+          f"across {result.days_written} day(s) since {since}.")
+    for warning in list(envelope.warnings) + result.warnings:
+        print(f"  ! {warning}")
+    return 0
+
+
+def cmd_ebay_fees(args, policy, store) -> int:
+    """Reconcile [fees.ebay] against what eBay actually charged."""
+    from datetime import date, timedelta
+
+    from connectors.ebay import EbayConnector
+    from .fees import propose_policy_patch, reconcile_ebay, render
+
+    since = args.since or (date.today() - timedelta(days=args.days - 1)).isoformat()
+    envelope = EbayConnector().fetch_transactions(since=since)
+    reconciliation = reconcile_ebay(envelope.payload, policy)
+    patch = propose_policy_patch(reconciliation)
+    print(render(reconciliation, patch))
+    return 0
+
+
+def cmd_ebay_rivals(args, policy, store) -> int:
+    """Competitor offers from the Browse API."""
+    from connectors.ebay import EbayConnector
+
+    envelope = EbayConnector().fetch_competitor_offers(args.query)
+    offers = sorted(envelope.payload, key=lambda o: o["landed_price"])
+    print(f"\nCOMPETITOR OFFERS — {args.query!r}")
+    if offers:
+        print(f"  {'PRICE':>9}{'SHIP':>8}{'LANDED':>10}  {'FEEDBACK':>9}  SELLER")
+        for offer in offers[:args.limit]:
+            feedback = (f"{offer['feedback_pct']:.1f}%"
+                        if offer["feedback_pct"] is not None else "—")
+            print(f"  {offer['price']:>9,.2f}{offer['shipping']:>8,.2f}"
+                  f"{offer['landed_price']:>10,.2f}  {feedback:>9}  "
+                  f"{offer['seller']}")
+        landed = [o["landed_price"] for o in offers]
+        print(f"\n  landed range ${min(landed):,.2f}–${max(landed):,.2f}, "
+              f"median ${sorted(landed)[len(landed) // 2]:,.2f}")
+    for warning in envelope.warnings:
+        print(f"\n  ! {warning}")
+    return 0
+
+
 def cmd_shopify_product(args, policy, store) -> int:
     """Show the Shopify draft product that would be created for a SKU."""
     import json as _json
@@ -1787,6 +1864,22 @@ def main(argv: list[str] | None = None) -> int:
         "shopify-sync", help="pull Shopify orders into the funnel table")
     p_ssync.add_argument("--days", type=int, default=30)
 
+    sub.add_parser("ebay-verify", help="verify the eBay connection and scopes")
+
+    p_esync = sub.add_parser("ebay-sync", help="pull eBay orders into the tables")
+    p_esync.add_argument("--days", type=int, default=90)
+    p_esync.add_argument("--since", default="", help="ISO date, overrides --days")
+
+    p_efee = sub.add_parser(
+        "ebay-fees", help="reconcile [fees.ebay] against real eBay charges")
+    p_efee.add_argument("--days", type=int, default=90)
+    p_efee.add_argument("--since", default="")
+
+    p_eriv = sub.add_parser(
+        "ebay-rivals", help="competitor offers and landed prices from Browse")
+    p_eriv.add_argument("query")
+    p_eriv.add_argument("--limit", type=int, default=15)
+
     p_sprod = sub.add_parser(
         "shopify-product",
         help="show (or create) the Shopify draft product for a SKU")
@@ -1920,7 +2013,9 @@ def main(argv: list[str] | None = None) -> int:
         "tiktok-trends": cmd_tiktok_trends, "tiktok-report": cmd_tiktok_report,
         "shopify-verify": cmd_shopify_verify,
         "shopify-sync": cmd_shopify_sync,
-        "shopify-product": cmd_shopify_product, "creative": cmd_creative,
+        "shopify-product": cmd_shopify_product,
+        "ebay-verify": cmd_ebay_verify, "ebay-sync": cmd_ebay_sync,
+        "ebay-fees": cmd_ebay_fees, "ebay-rivals": cmd_ebay_rivals, "creative": cmd_creative,
         "produce": cmd_produce, "publish-log": cmd_publish_log,
         "video-metrics": cmd_video_metrics, "calendar": cmd_calendar,
         "funnel": cmd_funnel, "experiment": cmd_experiment, "learn": cmd_learn,

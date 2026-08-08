@@ -312,3 +312,91 @@ def sync_from_connector(store: Store, connector: Any, *, days: int = 30,
 def source_of(envelope: Any) -> str:
     """Provenance of a fetch, defaulting to unknown rather than to live."""
     return str(getattr(envelope, "source", "") or "unknown")
+
+
+# ---------------------------------------------------------------------------
+# eBay
+# ---------------------------------------------------------------------------
+def sync_ebay_orders(store: Store, orders: list[Any], policy: Any, *,
+                     data_source: str = "live") -> SyncResult:
+    """Aggregate eBay order summaries into the funnel and per-SKU tables.
+
+    eBay has no traffic-source concept — a buyer arrived through eBay search,
+    and that is all anyone knows. So every row lands in a single `ebay` channel
+    rather than being split into invented sources. Reporting a channel
+    breakdown here would be fabricating a distinction the platform does not
+    make.
+    """
+    fees_cfg = _fee_schedule(policy, "ebay")
+    daily: dict[str, dict[str, float]] = defaultdict(
+        lambda: {"orders": 0.0, "revenue": 0.0, "new_customers": 0.0})
+    per_sku: dict[tuple[str, str], dict[str, float]] = defaultdict(
+        lambda: {"units": 0.0, "revenue": 0.0, "fees": 0.0})
+    seen_buyers: set[str] = set()
+    counted = excluded = 0
+    warnings: list[str] = []
+
+    for order in orders:
+        day = _day_of(getattr(order, "created_at", ""))
+        # `is_revenue` already excludes cancelled and unpaid. Counting either
+        # would overstate sales and conversion at the same time.
+        if not day or not getattr(order, "is_revenue", False):
+            excluded += 1
+            continue
+
+        bucket = daily[day]
+        bucket["orders"] += 1
+        bucket["revenue"] += float(getattr(order, "gross_total", 0.0))
+        buyer = str(getattr(order, "buyer_key", "") or "")
+        if buyer and buyer not in seen_buyers:
+            seen_buyers.add(buyer)
+            bucket["new_customers"] += 1
+
+        for line in (getattr(order, "line_items", None) or []):
+            sku = str(line.get("sku") or "").strip()
+            if not sku:
+                continue
+            revenue = float(line.get("revenue") or 0.0)
+            units = int(line.get("quantity") or 0)
+            row = per_sku[(day, sku)]
+            row["units"] += units
+            row["revenue"] += revenue
+            row["fees"] += _estimate_fees(revenue, units, fees_cfg)
+        counted += 1
+
+    for day, totals in sorted(daily.items()):
+        store.upsert_storefront_daily(
+            metric_date=day, channel="ebay",
+            # eBay exposes listing views through the Analytics traffic report,
+            # not per session. Left unset rather than approximated.
+            sessions=None,
+            orders=int(totals["orders"]), revenue=round(totals["revenue"], 2),
+            refunds=0.0, new_customers=int(totals["new_customers"]),
+            data_source=data_source)
+
+    for (day, sku), totals in sorted(per_sku.items()):
+        store.upsert_daily_metric(
+            metric_date=day, marketplace="ebay", sku=sku,
+            units=int(totals["units"]), revenue=round(totals["revenue"], 2),
+            # Cost of goods is not on an eBay order — it comes from the
+            # purchase order, which the platform never sees. Left at zero so
+            # profit reads as unknown rather than as revenue.
+            cogs=0.0, fees=round(totals["fees"], 2), ad_spend=0.0, refunds=0.0,
+            net_profit=0.0, data_source=data_source)
+
+    if per_sku:
+        warnings.append(
+            "Per-SKU profit is 0 because eBay does not know what the goods "
+            "cost — that comes from the purchase order. Set cost on the "
+            "inventory item, or profit stays unknown rather than being guessed.")
+    if excluded:
+        warnings.append(
+            f"{excluded} order(s) excluded as unpaid, cancelled, or undated.")
+    warnings.append(
+        "Fees are estimated from [fees.ebay]. Run `ebay-fees` to reconcile them "
+        "against what eBay actually charged.")
+
+    return SyncResult(
+        days_written=len(daily), orders_seen=len(orders), orders_counted=counted,
+        orders_excluded=excluded, channels=["ebay"] if daily else [],
+        unattributed_share_pct=None, warnings=warnings)

@@ -1,43 +1,43 @@
 # Autonomous Ecommerce Business Operator
 
-A decision engine for an ecommerce content business: **organic TikTok video
-drives traffic to a Shopify store**. TikTok Shop, Amazon, Walmart and eBay plug
-into the same marketplace interfaces.
+A decision engine for an ecommerce business selling on **eBay**, with Amazon,
+Shopify and TikTok Shop plugging into the same marketplace interfaces.
 
 The loop it runs:
 
 ```
-research → score → select → list on Shopify → make videos → publish
-        → measure → learn → repeat
+research → score → select → source → list (unpublished) → publish
+        → measure → reprice → learn → repeat
 ```
 
 It screens products, scores suppliers, prepares negotiations, calculates unit
-economics, drafts listings and Shopify products, generates ten creative angles
-with shootable production packages, schedules publishing, diagnoses where the
-funnel leaks, runs product tests that are allowed to fail, and reports what the
-history actually supports concluding — with every rule from the operating
+economics, drafts listings, reprices against **real competitor offers**,
+reconciles the fee schedule against what the marketplace actually charged,
+plans inventory, runs product tests that are allowed to fail, and reports what
+the history actually supports concluding — with every rule from the operating
 policy enforced in code and every decision journaled so the system can be
 measured over time.
 
-Because acquisition is organic, the cost of a customer is a shoot day rather
-than a bid. There is no CAC to optimise down, so profit per order comes from
-order value, repeat purchase and refund rate — and reach comes from hit rate
-across many angles, not from spend.
+eBay is a *search* marketplace: demand already exists and the job is to be the
+offer it lands on. That makes title, landed price and seller standing the
+levers. The content engines (ten creative angles, storyboards, SRT, publishing
+calendar) are built and tested but are **not** the primary loop — they belong
+to a discovery channel, which this is not.
 
 ---
 
 ## Read this first
 
-**Amazon SP-API** (`connectors/amazon/`), **TikTok Shop**
-(`connectors/tiktok/`), and **Shopify Admin GraphQL** (`connectors/shopify/`)
-are fully implemented. Walmart and eBay are still declarations.
+**eBay** (`connectors/ebay/`), **Amazon SP-API** (`connectors/amazon/`),
+**TikTok Shop** (`connectors/tiktok/`) and **Shopify Admin GraphQL**
+(`connectors/shopify/`) are fully implemented. Walmart is still a declaration.
 
-Shopify is the one that needs no eligibility review: a custom app in your own
-store issues a permanent Admin API token in about two minutes. TikTok Shop Open
-API registration is gated on seller eligibility; while it is blocked, the
-operator runs on Seller Center CSV exports (`tiktok-import`), which are real
-data moved by hand and are tracked with provenance `import` — distinct from both
-`live` and `seed`.
+eBay needs no eligibility review — the developer programme is free and open, and
+a keyset plus one consent flow gets you API access the same day. That is why it
+is the primary marketplace here: TikTok Shop's Open API is gated on seller
+eligibility, and while that is blocked the operator falls back to Seller Center
+CSV exports (`tiktok-import`), which are real data moved by hand and tracked
+with provenance `import` — distinct from both `live` and `seed`.
 
 **No marketplace is connected in this checkout.** This repository contains the
 operator; it does not contain your business. Until credentials exist it runs in
@@ -72,8 +72,21 @@ python3 -m operator_core.cli capital                  # allocation, concentratio
 python3 -m operator_core.cli approvals                # what needs your sign-off
 python3 -m operator_core.cli approve <id> --by "Your Name"
 python3 -m operator_core.cli outcome <id> --met true --note "sold through in 38d"
-python3 -m unittest discover -s tests -p "test_*.py"   # 669 tests
+python3 -m unittest discover -s tests -p "test_*.py"   # 762 tests
 ```
+
+### eBay commands (require live credentials)
+
+```bash
+python3 -m operator_core.cli ebay-verify                   # token, scopes, seller standing
+python3 -m operator_core.cli ebay-sync --days 90           # orders → funnel + per-SKU
+python3 -m operator_core.cli ebay-fees --days 90           # reconcile [fees.ebay] against reality
+python3 -m operator_core.cli ebay-rivals "slicker brush"   # competitor landed prices
+```
+
+`ebay-fees` is the highest-value one. `[fees.ebay]` is an estimate until
+reconciled, and it decides which products clear the margin gate and where price
+floors sit. It proposes a patch and never writes the file.
 
 ### The growth loop
 
@@ -171,10 +184,12 @@ python3 -m operator_core.cli tiktok-report                 # daily optimisation
 | `dashboard.py` | Terminal and self-contained HTML dashboard. |
 | `storefront.py` | Shopify orders → the daily funnel and per-SKU profit tables. |
 | `shopify_listing.py` | Candidate + listing copy → a Shopify draft product. |
+| `fees.py` | Reconciles `[fees.*]` against real marketplace charges. |
 | `connectors/credentials.py` | Provider-agnostic credential resolution. A new provider is a spec. |
 | `connectors/amazon/` | SP-API: auth → transport → client → connector. |
 | `connectors/tiktok/` | TikTok Shop: signing → auth → transport → client → connector + CSV import. |
 | `connectors/shopify/` | Admin GraphQL: credentials → transport → queries → client → connector. |
+| `connectors/ebay/` | Sell + Browse: dual-token OAuth, daily quota, competitor pricing. |
 | `connectors/` | Other marketplace adapters. Fail loudly when unconfigured. |
 
 ## The policy file is the constitution
@@ -543,9 +558,15 @@ so when the sample is too small to mean anything.
   revenue-per-visitor are reported as unknown rather than back-computed from
   orders. A conversion rate built on a guessed denominator is the most
   confidently wrong number a store can produce.
-- Shopify has no competitor pricing and no native reviews. Both calls raise
-  with the reason; scraping rival storefronts is a ToS breach with legal
-  exposure, and an empty list would read as "no competitors".
+- Competitor pricing works on eBay only. Shopify and TikTok both raise, because
+  the only way to get rival prices there is scraping — a ToS breach with legal
+  exposure — and an empty list would read as "no competitors".
+- Reviews are unavailable everywhere. eBay feedback attaches to the seller and
+  the transaction rather than the item, so there is no product-review corpus to
+  cluster for defect themes.
+- eBay's refresh token cannot be renewed in software. It stops working about 18
+  months after consent and needs a human at a browser; the operator warns from
+  17 months, but only if `EBAY_REFRESH_TOKEN_GRANTED_AT` is set.
 - There is no built-in "best time to post" table and there will not be one.
   Every published one is a different audience in a different timezone.
   `calendar` reads this account's own history or says it cannot yet — which

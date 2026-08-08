@@ -14,7 +14,7 @@ base_currency = "USD"
 # TikTok Shop is the primary marketplace. Engines default to its fee model,
 # settlement lag, and policy rules; other marketplaces plug into the same
 # interfaces without changing business logic.
-primary_marketplace = "tiktok"
+primary_marketplace = "ebay"
 # Set to false until live marketplace credentials are wired and verified.
 # While false, every connector refuses to perform writes of any kind.
 live_trading_enabled = false

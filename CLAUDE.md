@@ -5,24 +5,37 @@ accounts suspended. Work accordingly.
 
 ## Charter
 
-**The business is organic TikTok content driving traffic to a Shopify store.**
-TikTok is the acquisition channel; Shopify is where the sale happens and where
-the margin lives. TikTok Shop remains the primary *marketplace*
-(`meta.primary_marketplace`) — engines default to its fee model, settlement lag,
-and policy rules — but the loop the business runs on is:
+**The business sells on eBay** (`meta.primary_marketplace = "ebay"`). Engines
+default to its fee model, settlement timing, and policy rules. Every other
+marketplace plugs into the same interfaces; adding one must never require
+changing business logic.
+
+eBay is a **search** marketplace, and that decides which levers matter. Nobody
+scrolls past a listing — they went looking. Demand already exists and the job is
+to be the offer it lands on, so the levers are title, landed price, and seller
+standing. The loop is:
 
 ```
-research → score → select → list on Shopify → make videos → publish
-        → measure → learn → repeat
+research → score → select → source → list (unpublished) → publish
+        → measure → reprice → learn → repeat
 ```
 
-`growth_pipeline.run_growth_cycle` is that loop. Every other marketplace plugs
-into the same interfaces; adding one must never require changing business logic.
+This is a different business from a discovery channel, where content
+manufactures demand. The content engines (`creative.py`, `production.py`,
+`publishing.py`) are retained and still work, but they are **not the primary
+loop** — they exist for a future channel, not this one. Do not wire them into
+the eBay cycle to make them feel used.
 
-Because acquisition is organic, **the cost of a customer is a shoot day, not a
-bid**. That changes which levers matter: there is no CAC to optimise down, so
-profit per order comes from AOV, repeat purchase, and refund rate — and reach
-comes from hit rate across many angles, not from spend.
+Two consequences follow from being on a marketplace rather than an owned store:
+
+- **Competitor prices are knowable here.** eBay's Browse API publishes them, so
+  `fetch_competitor_offers` returns real data instead of raising. The repricer
+  and the competition dimensions of the scorecard work. Always compare on
+  *landed* price — a $15 item with $9 postage does not undercut a $20 item with
+  free postage.
+- **The platform owns the customer.** No email capture, no owned audience, and
+  13%+ of every sale leaves as commission. LTV is therefore weaker than an owned
+  store's and should not be modelled as though repeat purchase can be driven.
 
 You are an autonomous ecommerce operating system. The objective is to maximise
 **long-term after-tax profit** while protecting capital, marketplace accounts,
@@ -83,6 +96,10 @@ Six standing objectives:
 | Analytics dashboard (terminal + HTML) | `dashboard.py` |
 | Shopify orders → daily funnel table | `storefront.py` |
 | Candidate → Shopify draft product | `shopify_listing.py` |
+| eBay Sell + Browse APIs | `connectors/ebay/`, `[fees.ebay]` |
+| Competitor prices (the only source) | `ebay.fetch_competitor_offers` |
+| Fee schedule reconciliation | `fees.py` |
+| eBay orders → funnel and per-SKU tables | `storefront.sync_ebay_orders` |
 
 A charter clause that is not enforced somewhere in that table is an aspiration,
 not a rule. If you add one, add the code and the test with it.
@@ -162,9 +179,15 @@ Three more blind spots worth stating in the same breath:
   counts, so conversion rate and revenue-per-visitor are `None` rather than
   back-computed from orders. A conversion rate built on a guessed denominator
   is the most confidently wrong number a store can produce.
-- **Competitor prices and reviews.** Neither is in the Shopify Admin API, and
-  scraping rival storefronts is a ToS breach with legal exposure. Those calls
-  raise; an empty list would read as "no competitors", which is never true.
+- **Competitor prices — solved on eBay, nowhere else.** eBay's Browse API
+  publishes rival offers legally, so the repricer works on the primary
+  marketplace. On Shopify and TikTok the same call still raises: the only way
+  to get rival prices there is scraping, which is a ToS breach with legal
+  exposure, and an empty list would read as "no competitors", which is never
+  true.
+- **Reviews.** eBay feedback attaches to the seller and the transaction, not to
+  the item, so there is no product-review corpus to cluster for defect themes.
+  Shopify has none natively either.
 
 Do not substitute your own impressions of what is trending for a data feed.
 A confident guess about demand is the most expensive kind of fabrication here,
@@ -259,12 +282,42 @@ Shopify tests use `ShopifySender` with `sh_ok`, `sh_error`, `sh_user_error` and
 `sh_http` — one helper per failure layer, so a suite built only on the happy
 shape cannot pass against a client that checks none of them.
 
+eBay is in `connectors/ebay/`, same layering, and is the primary marketplace.
+Three things there are unlike everything else in this repo:
+
+- **Two token kinds from one keyset.** Browse takes an *application* token
+  (client-credentials); every Sell API takes a *user* token (refresh grant).
+  They are not interchangeable, and a Sell call made with an application token
+  returns a 403 that reads like a missing scope. `TokenProvider` caches them in
+  separate slots and every call site names which it wants — never inferred from
+  the path.
+- **The rate limit is a daily quota, not a refilling bucket.** eBay grants a
+  fixed number of calls per API per day, resetting at midnight UTC. Waiting is
+  useless, so `DailyQuota` **refuses** rather than sleeping, meters each API
+  separately, and holds back a 20% reserve. For the same reason
+  `EbayQuotaExhausted.retryable` is always False — a 429 here means "done until
+  tomorrow", not "try again shortly".
+- **The refresh token dies on a calendar, not on an error.** It does not rotate
+  and cannot be renewed in software; about 18 months after consent it simply
+  stops, and only a human at a browser fixes it. `grant_age_warning()` tracks
+  `EBAY_REFRESH_TOKEN_GRANTED_AT` and warns from 17 months. A missing grant date
+  is itself reported.
+
+Unlike TikTok and Shopify, eBay uses honest HTTP status codes — a 2xx means it
+worked. Do not add a defensive body-check that never fires. Errors carry a
+stable numeric `errorId`; branch on that, not on message text.
+
+**Before changing `[fees.ebay]`, run `ebay-fees`.** `fees.py` reconciles the
+schedule against the Finances API and proposes a patch; it never writes the
+file, because a fee change moves every margin gate in the system and belongs in
+a commit with a stated source and date range.
+
 ## Testing
 
 ```
 python3 -m unittest discover -s tests -p "test_*.py"
 ```
-669 tests, must stay green. Discovery rather than an explicit module list: a
+762 tests, must stay green. Discovery rather than an explicit module list: a
 list has to be edited when a suite is added, and the one that gets forgotten is
 the one that stops running.
 
