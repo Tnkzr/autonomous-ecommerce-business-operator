@@ -647,3 +647,142 @@ def sh_journey(source: str = "tiktok", *, source_type: str = "social",
                       "referrerUrl": referrer, "landingPage": landing,
                       "utmParameters": utm or {}},
     }
+
+
+# ---------------------------------------------------------------------------
+# eBay fixtures.
+#
+# Shape note: unlike TikTok and Shopify, eBay uses honest HTTP status codes —
+# a 2xx means it worked. Errors carry a stable numeric `errorId`, which is what
+# code should branch on; the message text gets reworded between releases.
+# ---------------------------------------------------------------------------
+from connectors.ebay.transport import Response as EbayResponse
+
+
+class EbaySender:
+    """Replays queued eBay responses and records the requests made."""
+
+    def __init__(self, script: list) -> None:
+        self.script = list(script)
+        self.requests: list[dict[str, Any]] = []
+
+    def __call__(self, *, method: str, url: str, headers: dict[str, str],
+                 body: str | None, timeout: float) -> EbayResponse:
+        self.requests.append({
+            "method": method, "url": url, "headers": headers,
+            "body": json.loads(body) if body else None,
+            "marketplace": headers.get("X-EBAY-C-MARKETPLACE-ID", ""),
+            "authorization": headers.get("Authorization", ""),
+        })
+        if not self.script:
+            raise AssertionError(f"EbaySender exhausted; unexpected {method} {url}")
+        entry = self.script.pop(0)
+        if callable(entry):
+            entry = entry(method=method, url=url, headers=headers, body=body)
+        status, payload, resp_headers = entry
+        return EbayResponse(status=status, headers=resp_headers or {}, body=payload)
+
+    @property
+    def last(self) -> dict[str, Any]:
+        return self.requests[-1]
+
+    def urls(self) -> list[str]:
+        return [r["url"] for r in self.requests]
+
+
+class FakeEbayTokens:
+    """Records which token kind each call asked for."""
+
+    def __init__(self) -> None:
+        self.requested: list[str] = []
+        self.invalidations: list[str] = []
+        self.refresh_count = 0
+
+    def access_token(self, kind: str = "user", *, force_refresh: bool = False) -> str:
+        self.requested.append(kind)
+        return f"token-{kind}"
+
+    def invalidate(self, kind: str | None = None) -> None:
+        self.invalidations.append(kind or "all")
+
+    def grant_age_warning(self, **_kw) -> str:
+        return ""
+
+
+def eb_ok(payload: dict, *, status: int = 200, headers: dict | None = None) -> tuple:
+    return (status, payload, headers or {})
+
+
+def eb_error(status: int, error_id: int, message: str, *,
+             long_message: str = "", parameters: list | None = None) -> tuple:
+    """An eBay failure. Status is honest; errorId is the stable identifier."""
+    error: dict[str, Any] = {"errorId": error_id, "domain": "API_FULFILLMENT",
+                             "category": "REQUEST", "message": message}
+    if long_message:
+        error["longMessage"] = long_message
+    if parameters:
+        error["parameters"] = parameters
+    return (status, {"errors": [error]}, {})
+
+
+def eb_token(access_token: str = "v^1.1#i^1#access", expires_in: int = 7200) -> tuple:
+    return (200, {"access_token": access_token, "expires_in": expires_in,
+                  "token_type": "User Access Token"})
+
+
+def eb_token_error(error: str, description: str = "", *, status: int = 400) -> tuple:
+    return (status, {"error": error, "error_description": description})
+
+
+EB_STANDARDS = {
+    "standardsLevel": "TOP_RATED",
+    "program": "PROGRAM_US",
+    "cycle": {"cycleType": "CURRENT"},
+    "username": "test_seller",
+    "metrics": [
+        {"metricKey": "DEFECTIVE_TRANSACTION_RATE",
+         "value": {"value": "0.4"}, "lookbackStartDate": "2026-01-01"},
+        {"metricKey": "SHIPPING_MISS_RATE", "value": {"value": "1.2"}},
+        {"metricKey": "CASES_NOT_RESOLVED_RATE", "value": {"value": "0.0"}},
+    ],
+}
+
+
+def eb_order(order_id: str = "12-34567-89012", *, total: str = "24.99",
+             payment: str = "PAID", cancelled: bool = False,
+             created: str = "2026-07-20T10:00:00.000Z",
+             sku: str = "SKU-1", quantity: int = 1,
+             buyer: str = "buyer_one") -> dict:
+    return {
+        "orderId": order_id,
+        "creationDate": created,
+        "orderPaymentStatus": payment,
+        "orderFulfillmentStatus": "FULFILLED",
+        "cancelStatus": {"cancelState": "CANCELED" if cancelled else "NONE_REQUESTED"},
+        "pricingSummary": {"total": {"value": total, "currency": "USD"}},
+        "buyer": {"username": buyer},
+        "lineItems": [{
+            "lineItemId": "1",
+            "sku": sku,
+            "title": "Self cleaning slicker brush",
+            "quantity": quantity,
+            "total": {"value": total, "currency": "USD"},
+        }],
+    }
+
+
+def eb_browse_item(item_id: str, price: str, *, seller: str = "rival_seller",
+                   shipping: str = "0.00", feedback_pct: str = "99.2",
+                   feedback_score: int = 4210, condition: str = "New",
+                   top_rated: bool = False) -> dict:
+    return {
+        "itemId": item_id,
+        "title": "Self Cleaning Slicker Brush for Dogs",
+        "price": {"value": price, "currency": "USD"},
+        "condition": condition,
+        "topRatedBuyingExperience": top_rated,
+        "seller": {"username": seller, "feedbackPercentage": feedback_pct,
+                   "feedbackScore": feedback_score},
+        "shippingOptions": [{"shippingCost": {"value": shipping,
+                                              "currency": "USD"}}],
+    }

@@ -1,12 +1,12 @@
 """Connector registry.
 
-Amazon (`connectors.amazon`), TikTok Shop (`connectors.tiktok`) and Shopify
-(`connectors.shopify`) are fully implemented and are imported here rather than
-redeclared — a registry that carries its own stub of an implemented connector
+Amazon (`connectors.amazon`), TikTok Shop (`connectors.tiktok`), Shopify
+(`connectors.shopify`) and eBay (`connectors.ebay`) are fully implemented and
+are imported here rather than redeclared — a registry that carries its own stub of an implemented connector
 will eventually hand one out, and the caller gets a "not implemented" error for
 something that works.
 
-Walmart and eBay are still declarations: they name the exact credentials their
+Walmart is still a declaration: they name the exact credentials their
 real API needs, so `operator status` reports precisely what to provision, and
 their reads fail loudly rather than fabricating data. Each documents the
 endpoints to implement and the gotcha that matters most.
@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from .amazon import AmazonConnector
+from .ebay import EbayConnector
 from .shopify import ShopifyConnector
 from .tiktok import TikTokShopConnector
 from .base import DataEnvelope, MarketplaceConnector, MarketplaceNotImplemented
@@ -66,22 +67,6 @@ class WalmartConnector(_UnimplementedReads):
     endpoints = "/v3/orders, /v3/inventory, /v3/items, /v3/price"
     required_env = ("WALMART_CLIENT_ID", "WALMART_CLIENT_SECRET")
     docs_url = "https://developer.walmart.com/doc/us/mp/us-mp-getting-started/"
-
-
-class EbayConnector(_UnimplementedReads):
-    """eBay Sell APIs.
-
-    Endpoints: Fulfillment (orders), Inventory, Marketing, Browse (rival offers).
-
-    Gotcha: OAuth user tokens expire in ~2 hours; the refresh token is the one
-    to persist. The Browse API is the correct source for competitor pricing —
-    scraping listing pages violates the site terms.
-    """
-
-    name = "ebay"
-    endpoints = "Fulfillment (orders), Inventory, Marketing, Browse"
-    required_env = ("EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_REFRESH_TOKEN")
-    docs_url = "https://developer.ebay.com/api-docs/sell/static/oauth/oauth-tokens.html"
 
 
 CONNECTOR_REGISTRY: dict[str, type[MarketplaceConnector]] = {
